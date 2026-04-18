@@ -1,0 +1,47 @@
+# Nextflow
+.nextflow/
+.nextflow.log*
+work/
+results/
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Reference data (large binary files)
+*.npz
+*.bam
+*.bai
+*.fastq.gz
+*.fq.gz
+
+# Config secrets
+conf/labs/*/secrets.json
+*.key
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
