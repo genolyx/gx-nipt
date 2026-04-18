@@ -4,7 +4,7 @@
  *  gx-nipt: Genolyx NIPT Analysis Pipeline (Nextflow)
  * =========================================================
  *  Author  : Hyukjung Kwon
- *  Version : 1.0.0
+ *  Version : 1.1.0
  *  License : MIT
  * =========================================================
  *
@@ -18,7 +18,9 @@
  *       │               │
  *       │               ├─► [QC] Qualimap → QC Filter ──────────────────────────►  Output_QC
  *       │               │
- *       │               ├─► [FF/Gender] YFF + YFF2 + SeqFF + Fragment FF ───────►  Output_FF
+ *       │               ├─► [FF/Gender] YFF + YFF2 + seqFF + Fragment FF
+ *       │               │              + gx-FF (LightGBM+DNN ensemble) [NEW]
+ *       │               │              → Ensemble FF → Gender Decision ──────────►  Output_FF
  *       │               │
  *       │               ├─► [HMMcopy] readCounter (50kb + 10mb) → HMMcopy.R ───►  Output_hmmcopy
  *       │               │       │
@@ -26,11 +28,22 @@
  *       │               │       └─► [PRIZM] orig / fetus / mom ────────────────►  Output_PRIZM
  *       │               │
  *       │               ├─► [WC/WCX] Wisecondor + WisecondorX ───────────────►  Output_WC / Output_WCX
+ *       │               │   [gx-cnv] Hybrid dual-track (parallel) [NEW] ───────►  Output_gxcnv
+ *       │               │   [Compare] gx-cnv vs WCX concordance report [NEW] ──►  Output_cnv_comparison
  *       │               │
  *       │               └─► [MD] Microdeletion detection ─────────────────────►  Output_MD
  *       │
  *       └─► [REPORT] JSON + HTML ────────────────────────────────────────────►  Output_Result
  *
+ * New in v1.1.0:
+ *   - gx-FF: LightGBM + DNN ensemble FF estimation (parallel with seqFF)
+ *     Set --gxff_model /path/to/model.pkl to enable.
+ *     Falls back to seqFF-only when model is absent.
+ *
+ *   - gx-cnv: Hybrid dual-track CNV detection (parallel with WisecondorX)
+ *     Set --gxcnv_reference /path/to/reference.npz to enable.
+ *     Produces concordance report vs WCX for validation.
+ *     Once validated, disable WCX with --run_wcx false.
  */
 
 nextflow.enable.dsl = 2
@@ -66,6 +79,23 @@ params.analysisdir  = null   // resolved at runtime
 
 params.algorithm_only = false
 params.force          = false
+
+// ── gx-FF parameters ─────────────────────────────────────
+// Set to a .pkl model path to enable gx-FF.
+// Leave as null to use seqFF-only (legacy behaviour).
+params.gxff_model   = null   // e.g. /data/nipt/models/gxff_v1.pkl
+
+// ── gx-cnv parameters ────────────────────────────────────
+// Set to a .npz reference path to enable gx-cnv in parallel with WCX.
+// Leave as null to skip gx-cnv entirely.
+params.gxcnv_reference = null   // e.g. /data/nipt/refs/gxcnv_ref.npz
+params.gxcnv_bin_size  = 100000 // bin size for gxcnv convert
+params.gxcnv_thresh_z  = -3.0   // Track A Z-score threshold
+params.gxcnv_thresh_p  = 0.05   // Track B p-value threshold
+
+// When true, WisecondorX runs alongside gx-cnv for concordance validation.
+// Set to false once gx-cnv is validated and WCX is no longer needed.
+params.run_wcx = true
 
 // ─────────────────────────────────────────────────────────
 // Validate required parameters
@@ -105,12 +135,11 @@ workflow {
     def analysisdir = params.analysisdir ?: "${root_dir}/analysis/${work_dir}/${sample_name}"
 
     // ── Channel creation ──────────────────────────────────
-    // Config file channel
     ch_config = Channel.fromPath("${root_dir}/config/${labcode}/pipeline_config.json", checkIfExists: true)
 
     // FASTQ or BAM input
     if (params.from_bam) {
-        ch_bam = Channel.fromPath(params.from_bam, checkIfExists: true)
+        ch_bam   = Channel.fromPath(params.from_bam, checkIfExists: true)
         ch_fastq = Channel.empty()
     } else {
         def fastq_dir = "${root_dir}/fastq/${work_dir}/${sample_name}"
@@ -120,6 +149,17 @@ workflow {
         ])
         ch_bam = Channel.empty()
     }
+
+    // ── Optional tool paths ───────────────────────────────
+    // gx-FF model: use NO_FILE sentinel when not provided
+    def gxff_model_path = params.gxff_model
+        ? file(params.gxff_model, checkIfExists: true)
+        : file('NO_FILE')
+
+    // gx-cnv reference: use NO_FILE sentinel when not provided
+    def gxcnv_ref_path = params.gxcnv_reference
+        ? file(params.gxcnv_reference, checkIfExists: true)
+        : file('NO_FILE')
 
     // ── Alignment & BAM generation ────────────────────────
     if (!params.algorithm_only) {
@@ -151,26 +191,39 @@ workflow {
         ch_qc_passed = Channel.value(true)
     }
 
-    // ── Fetal Fraction & Gender (parallel) ────────────────
-    FF_GENDER_WORKFLOW(
-        sample_name,
-        ch_proper_bam,
-        ch_config,
-        labcode,
-        analysisdir
-    )
-    ch_ff_result = FF_GENDER_WORKFLOW.out.ff_result
-
-    // ── HMMcopy (parallel) ────────────────────────────────
+    // ── HMMcopy (parallel with FF/Gender) ─────────────────
+    // Run first so bincount is available for gx-FF
     HMMCOPY_WORKFLOW(
         sample_name,
         ch_proper_bam,
         labcode,
         analysisdir
     )
-    ch_norm_50kb = HMMCOPY_WORKFLOW.out.norm_50kb
-    ch_norm_10mb = HMMCOPY_WORKFLOW.out.norm_10mb
+    ch_norm_50kb  = HMMCOPY_WORKFLOW.out.norm_50kb
+    ch_norm_10mb  = HMMCOPY_WORKFLOW.out.norm_10mb
     ch_count_10mb = HMMCOPY_WORKFLOW.out.count_10mb
+
+    // The 50kb bin count file (HMMcopy readCounter output) is passed to
+    // gx-FF so it can skip re-counting and use the already-computed bins.
+    ch_bincount_50kb = HMMCOPY_WORKFLOW.out.bincount_50kb  // path or NO_FILE channel
+
+    // ── Fetal Fraction & Gender ───────────────────────────
+    FF_GENDER_WORKFLOW(
+        sample_name,
+        ch_proper_bam,
+        ch_bincount_50kb,
+        ch_config,
+        labcode,
+        analysisdir,
+        gxff_model_path
+    )
+    ch_ff_result = FF_GENDER_WORKFLOW.out.ff_result
+
+    // Log which FF method was used
+    FF_GENDER_WORKFLOW.out.ff_ensemble
+        .subscribe { sid, tsv ->
+            log.info "[FF] Sample ${sid}: ensemble FF result -> ${tsv}"
+        }
 
     // ── EZD (depends on HMMcopy 50kb) ─────────────────────
     EZD_WORKFLOW(
@@ -194,16 +247,28 @@ workflow {
     )
     ch_prizm_result = PRIZM_WORKFLOW.out.prizm_result
 
-    // ── Wisecondor (parallel with EZD/PRIZM) ──────────────
+    // ── Wisecondor + gx-cnv (parallel) ────────────────────
     WC_WORKFLOW(
         sample_name,
         ch_proper_bam,
         ch_ff_result,
         ch_config,
         labcode,
-        analysisdir
+        analysisdir,
+        gxcnv_ref_path,
+        params.gxcnv_bin_size,
+        params.gxcnv_thresh_z,
+        params.gxcnv_thresh_p
     )
-    ch_wc_result = WC_WORKFLOW.out.wc_result
+    ch_wc_result         = WC_WORKFLOW.out.wc_result
+    ch_gxcnv_calls       = WC_WORKFLOW.out.gxcnv_calls
+    ch_gxcnv_comparison  = WC_WORKFLOW.out.gxcnv_comparison
+
+    // Log gx-cnv concordance when available
+    ch_gxcnv_comparison
+        .subscribe { sid, tsv ->
+            log.info "[gx-cnv] Sample ${sid}: concordance report -> ${tsv}"
+        }
 
     // ── Microdeletion ──────────────────────────────────────
     MD_WORKFLOW(
@@ -234,15 +299,22 @@ workflow {
 // Workflow completion handler
 // ─────────────────────────────────────────────────────────
 workflow.onComplete {
-    def status = workflow.success ? "SUCCESS" : "FAILED"
+    def status   = workflow.success ? "SUCCESS" : "FAILED"
     def duration = workflow.duration
+    def gxff_status  = params.gxff_model       ? "ENABLED (${params.gxff_model})"      : "DISABLED (seqFF only)"
+    def gxcnv_status = params.gxcnv_reference  ? "ENABLED (${params.gxcnv_reference})" : "DISABLED"
+    def wcx_status   = params.run_wcx          ? "ENABLED" : "DISABLED"
+
     log.info """
     ╔══════════════════════════════════════════════════════╗
     ║  gx-nipt Pipeline Completed                         ║
-    ║  Sample  : ${params.sample_name}
-    ║  Status  : ${status}
-    ║  Duration: ${duration}
-    ║  Work Dir: ${workflow.workDir}
+    ║  Sample    : ${params.sample_name}
+    ║  Status    : ${status}
+    ║  Duration  : ${duration}
+    ║  gx-FF     : ${gxff_status}
+    ║  gx-cnv    : ${gxcnv_status}
+    ║  WCX       : ${wcx_status}
+    ║  Work Dir  : ${workflow.workDir}
     ╚══════════════════════════════════════════════════════╝
     """.stripIndent()
 }
