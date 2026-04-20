@@ -117,6 +117,42 @@ def validate_params() {
         log.error "Parameter validation failed:\n" + errors.join("\n")
         System.exit(1)
     }
+
+    // ── SSD pre-flight guard ──────────────────────────────────────────────────
+    // Before starting, check that the SSD scratch dir has enough free space.
+    // Abort if current usage already exceeds ssd_max_usage_gb.
+    if (params.use_ssd && params.scratch_dir) {
+        def scratchDir = new File(params.scratch_dir.toString())
+        if (!scratchDir.exists()) {
+            scratchDir.mkdirs()
+            log.info "[SSD guard] Created scratch dir: ${scratchDir}"
+        }
+        try {
+            // Check current usage via 'du -sb'
+            def duProc = ["du", "-sb", params.scratch_dir.toString()].execute()
+            duProc.waitFor()
+            def duOut  = duProc.text.trim().split()[0]
+            def usedGb = (duOut.toLong() / (1024L * 1024L * 1024L))
+            def maxGb  = (params.ssd_max_usage_gb as int)
+            log.info "[SSD guard] Current scratch usage: ${usedGb.round(2)} GB / ${maxGb} GB limit"
+            if (usedGb >= maxGb) {
+                log.error "[SSD guard] ABORT: SSD scratch usage (${usedGb.round(2)} GB) exceeds limit (${maxGb} GB). " +
+                          "Clean up ${params.scratch_dir} before running, or increase --ssd_max_usage_gb."
+                System.exit(1)
+            }
+            // Check available free space (need at least ~3 GB per sample)
+            def freeBytes = scratchDir.getFreeSpace()
+            def freeGb    = (freeBytes / (1024L * 1024L * 1024L)).round(2)
+            if (freeGb < 3.0) {
+                log.error "[SSD guard] ABORT: Insufficient free space on SSD (${freeGb} GB available, need >= 3 GB). " +
+                          "Clean up ${params.scratch_dir} before running."
+                System.exit(1)
+            }
+            log.info "[SSD guard] Free space: ${freeGb} GB. Pre-flight check PASSED."
+        } catch (Exception e) {
+            log.warn "[SSD guard] Could not check SSD usage: ${e.message}. Proceeding without guard."
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -299,11 +335,65 @@ workflow {
 // Workflow completion handler
 // ─────────────────────────────────────────────────────────
 workflow.onComplete {
-    def status   = workflow.success ? "SUCCESS" : "FAILED"
-    def duration = workflow.duration
+    def status       = workflow.success ? "SUCCESS" : "FAILED"
+    def duration     = workflow.duration
     def gxff_status  = params.gxff_model       ? "ENABLED (${params.gxff_model})"      : "DISABLED (seqFF only)"
     def gxcnv_status = params.gxcnv_reference  ? "ENABLED (${params.gxcnv_reference})" : "DISABLED"
     def wcx_status   = params.run_wcx          ? "ENABLED" : "DISABLED"
+    def ssd_status   = params.use_ssd          ? "ENABLED (${params.scratch_dir})"      : "DISABLED"
+
+    // ── SSD workDir cleanup ──────────────────────────────────────────────────
+    // When use_ssd=true and ssd_work_dir=true, the workDir is on SSD.
+    // Nextflow's built-in cleanup=true removes task dirs but leaves the work
+    // root. We explicitly remove the per-sample work subtree to prevent
+    // SSD garbage accumulation.
+    //
+    // SAFETY: We only delete the per-sample subdirectory under scratch_dir,
+    // never the shared workDir root, to avoid corrupting concurrent runs.
+    if (params.use_ssd && params.ssd_work_dir) {
+        // Per-sample workDir is expected at: <scratch_dir>/nf_work/<sample_name>
+        def sampleWorkDir = new File("${params.scratch_dir}/nf_work/${params.sample_name}")
+        if (sampleWorkDir.exists()) {
+            try {
+                def deleted = sampleWorkDir.deleteDir()
+                if (deleted) {
+                    log.info "[SSD cleanup] Removed per-sample workDir: ${sampleWorkDir}"
+                } else {
+                    log.warn "[SSD cleanup] Could not fully remove per-sample workDir: ${sampleWorkDir}"
+                }
+            } catch (Exception e) {
+                log.warn "[SSD cleanup] Exception while removing per-sample workDir: ${e.message}"
+            }
+        }
+    }
+
+    // ── SSD scratch dir cleanup (BAM scratch) ───────────────────────────────
+    // The SCRATCH_CLEANUP process handles per-sample BAM cleanup inside the
+    // pipeline. This is a safety net for the top-level scratch root.
+    if (params.use_ssd) {
+        def scratchSample = new File("${params.scratch_dir}/${params.sample_name}")
+        if (scratchSample.exists()) {
+            try {
+                scratchSample.deleteDir()
+                log.info "[SSD cleanup] Removed scratch dir: ${scratchSample}"
+            } catch (Exception e) {
+                log.warn "[SSD cleanup] Could not remove scratch dir: ${e.message}"
+            }
+        }
+        // Report remaining SSD usage via 'du' (portable, no directorySize() needed)
+        try {
+            def proc    = ["du", "-sb", params.scratch_dir.toString()].execute()
+            proc.waitFor()
+            def duOut   = proc.text.trim().split()[0]
+            def usedGb  = (duOut.toLong() / (1024L * 1024L * 1024L)).round(2)
+            log.info "[SSD usage] Remaining scratch usage: ${usedGb} GB at ${params.scratch_dir}"
+            if (usedGb > (params.ssd_max_usage_gb as int) * 0.8) {
+                log.warn "[SSD usage] WARNING: SSD scratch usage (${usedGb} GB) exceeds 80% of limit (${params.ssd_max_usage_gb} GB). Consider manual cleanup."
+            }
+        } catch (Exception e) {
+            log.warn "[SSD usage] Could not measure scratch usage: ${e.message}"
+        }
+    }
 
     log.info """
     ╔══════════════════════════════════════════════════════╗
@@ -314,11 +404,35 @@ workflow.onComplete {
     ║  gx-FF     : ${gxff_status}
     ║  gx-cnv    : ${gxcnv_status}
     ║  WCX       : ${wcx_status}
+    ║  SSD       : ${ssd_status}
     ║  Work Dir  : ${workflow.workDir}
     ╚══════════════════════════════════════════════════════╝
     """.stripIndent()
 }
-
 workflow.onError {
     log.error "Pipeline execution stopped with the following message: ${workflow.errorMessage}"
+    // Safety cleanup: remove scratch dir even on failure
+    if (params.use_ssd) {
+        def scratchSample = new File("${params.scratch_dir}/${params.sample_name}")
+        if (scratchSample.exists()) {
+            try {
+                scratchSample.deleteDir()
+                log.info "[SSD cleanup] Removed scratch dir on error: ${scratchSample}"
+            } catch (Exception e) {
+                log.warn "[SSD cleanup] Could not remove scratch dir on error: ${e.message}"
+            }
+        }
+        if (params.ssd_work_dir) {
+            // SAFETY: Only delete per-sample subdir, not the shared workDir root
+            def sampleWorkDir = new File("${params.scratch_dir}/nf_work/${params.sample_name}")
+            if (sampleWorkDir.exists()) {
+                try {
+                    sampleWorkDir.deleteDir()
+                    log.info "[SSD cleanup] Removed per-sample workDir on error: ${sampleWorkDir}"
+                } catch (Exception e) {
+                    log.warn "[SSD cleanup] Could not remove per-sample workDir on error: ${e.message}"
+                }
+            }
+        }
+    }
 }
