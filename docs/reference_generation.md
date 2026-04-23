@@ -6,6 +6,72 @@ GX-NIPT requires lab-specific reference files for each algorithm (EZD, PRIZM, WC
 
 ---
 
+## Host Layout and Docker Bind-Mount
+
+Reference data is **not** baked into the `gx-nipt` image. The pipeline
+reads everything from a single host directory controlled by
+`params.ref_dir` (default `/data/reference`, overridable via
+`--ref-dir` on `run_nipt.sh` or `--ref_dir` to Nextflow). That directory
+is bind-mounted read-only into every container at the same path by the
+Docker profile in `nextflow.config`.
+
+Populate the host with this tree before running the pipeline:
+
+```
+/data/reference/
+├── genomes/hg19/hg19.fa          (+ .fai .0123 .amb .ann .bwt.2bit.64 .pac)
+├── hmmcopy/hg19.50kb.gc.wig      hg19.50kb.map.wig
+│          hg19.10mb.gc.wig       hg19.10mb.map.wig
+├── models/seqff_model.pkl
+└── labs/<labcode>/
+    ├── WC/<group>/<group>_200k.npz
+    ├── WCX/<group>/{M,F}_200k.npz
+    ├── EZD/<group>/…
+    ├── PRIZM/<group>/…
+    └── bed/…
+```
+
+`<labcode>` maps to the `--labcode` argument (`CORDLIFE`, `UCL`,
+`VN`, …). `<group>` is the reference grouping used by the lab
+(typically `orig`, `fetus`, `mom`, etc.; see each lab's
+`conf/labs/<lab>/pipeline_config.json`).
+
+> When invoked from `gx-daemon`, the daemon forwards `NIPT_REF_DIR` via
+> `--ref-dir`, and the wrapper fails fast if the required genome/hmmcopy
+> files or the `labs/<labcode>/` subtree are missing.
+
+### Deferred: gx-FF model and gx-cnv reference
+
+The new algorithms introduced in v1.1.0 ship **without** their own
+reference artefacts:
+
+| Algorithm | File type | Runtime flag | Status |
+|-----------|-----------|--------------|--------|
+| gx-FF     | `.pkl` LightGBM + DNN ensemble | `--gxff_model` / `--gxff-model` | deferred — trained in `genolyx/gx-FF` repo |
+| gx-cnv    | `.npz` hybrid reference panel  | `--gxcnv_reference` / `--gxcnv-reference` (alias: `--gxcnv-model`, `--gxcnv_model`) | deferred — built in `genolyx/gx-cnv` repo |
+
+These are **never required** to run the pipeline: `main.nf` substitutes
+a `NO_FILE` sentinel when the flag is absent, `GXFF_ENSEMBLE` falls
+back to seqFF-only FF estimation, and the gx-cnv pathway short-circuits
+so WisecondorX stays on the critical path. The wrapper's reference
+preflight does not include either file either.
+
+Once the companion repos publish artefacts, drop them under
+`${ref_dir}/models/gxff_model.pkl` and
+`${ref_dir}/gxcnv/<panel>.npz` (or wherever you prefer) and pass the
+path through `--gxff_model` / `--gxcnv_reference`, or set
+`NIPT_GXFF_MODEL` / `NIPT_GXCNV_REFERENCE` (or the `..._MODEL` alias)
+in `gx-daemon/.env` so every subsequent order picks them up
+automatically.
+
+Ensemble weighting (when gx-FF is enabled), as implemented in
+`workflows/ff_gender.nf`:
+
+- FF < 5 % — use gx-FF alone.
+- FF ≥ 5 % — blend `0.6 * gx-FF + 0.4 * seqFF`.
+
+---
+
 ## When to Regenerate References
 
 | Trigger | Action |

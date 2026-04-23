@@ -7,7 +7,7 @@
 
 include { FASTQC }           from '../modules/fastqc'
 include { QUALIMAP }         from '../modules/qualimap'
-include { QC_FILTER }        from '../modules/qc_filter'
+include { QC_FILTER }        from '../modules/qualimap'
 
 workflow QC_WORKFLOW {
     take:

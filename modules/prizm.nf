@@ -16,28 +16,33 @@ process RUN_PRIZM {
     publishDir "${analysisdir}/${sample_name}/Output_PRIZM/${group}", mode: 'copy', overwrite: true
 
     input:
-        val  sample_name
-        each group           // 'orig', 'fetus', 'mom'
-        path count_10mb
-        path ff_result
+        tuple val(sample_name), val(group), path(count_10mb)
+        path gender_txt
         path config_json
         val  labcode
         val  analysisdir
 
     output:
-        path "${sample_name}.of_${group}.prizm.qc.txt",  emit: prizm_result
-        path "*.png",                                     emit: plots, optional: true
+        tuple val(sample_name), val(group),
+              path("${sample_name}.of_${group}.prizm.qc.txt"), emit: prizm_result
+        path "*.png",                                          emit: plots, optional: true
+        path "*.enhanced_qc.txt",                              emit: enhanced_qc, optional: true
+        path "*.trisomy_detection.*",                          emit: trisomy, optional: true
+        path "*.prizm_summary.txt",                            emit: summary, optional: true
 
     script:
-        def ref_dir = "/data/refs/${labcode}/PRIZM/${group}"
+        def ref_dir = "${params.ref_dir}/labs/${labcode}/PRIZM/${group}"
         """
         set -euo pipefail
+
+        export TMPDIR="\${NXF_TASK_WORKDIR}"
+        export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
 
         python3 /opt/gx-nipt/bin/scripts/modules/prizm_runner.py \\
             --sample ${sample_name} \\
             --group ${group} \\
             --count-file ${count_10mb} \\
-            --ff-file ${ff_result} \\
+            --gender-file ${gender_txt} \\
             --config ${config_json} \\
             --ref-dir ${ref_dir} \\
             --outdir . \\

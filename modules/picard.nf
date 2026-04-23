@@ -22,10 +22,13 @@ process PICARD_MARKDUP {
 
     script:
         def picard_mem = "20G"
+        def picard_jar = "/Work/NIPT/bin/picard/picard.jar"
         """
         set -euo pipefail
 
-        picard -Xmx${picard_mem} MarkDuplicates \\
+
+        java -Xmx${picard_mem} -Djava.io.tmpdir="\$(realpath .)" \\
+            -jar ${picard_jar} MarkDuplicates \\
             INPUT=${bam} \\
             OUTPUT=${sample_name}.dedup.bam \\
             METRICS_FILE=${sample_name}.dedup.metrics \\

@@ -23,10 +23,18 @@ process QUALIMAP {
         path "qualimapReport.html",       emit: html, optional: true
 
     script:
+        // Qualimap writes output into a subdirectory named after the BAM file:
+        // e.g. GNCI26030001.proper_paired_stats/genome_results.txt
+        // Strip the .bam suffix and append _stats to get the subdir name.
+        def bam_base    = bam.name.replaceAll(/\.bam$/, '')
+        def stats_dir   = "${bam_base}_stats"
         """
         set -euo pipefail
 
-        # Run Qualimap
+        # Qualimap (Java) needs a writable tmpdir; /tmp is root-owned in --user containers.
+        export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=\${NXF_TASK_WORKDIR}"
+
+        # Run Qualimap (writes to ./${stats_dir}/)
         qualimap bamqc \\
             -bam ${bam} \\
             -outdir . \\
@@ -34,6 +42,10 @@ process QUALIMAP {
             --java-mem-size=8G \\
             -nt ${task.cpus} \\
             2> qualimap.log
+
+        # Hoist results to workdir root so Nextflow can stage them
+        cp ${stats_dir}/genome_results.txt  genome_results.txt
+        cp ${stats_dir}/qualimapReport.html qualimapReport.html || true
 
         # Parse genome_results.txt -> sample-level QC summary
         python3 /opt/gx-nipt/bin/scripts/utils/parse_qualimap.py \\

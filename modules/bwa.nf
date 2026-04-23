@@ -23,7 +23,7 @@ process BWA_ALIGN {
         def r1 = fastq_pair[0]
         def r2 = fastq_pair[1]
         def bwa_threads = params.max_cpus ?: 24
-        def ref_genome  = "/data/refs/genome/hg19/hg19.fa"
+        def ref_genome  = "${params.ref_dir}/genomes/hg19/hg19.fa"
         """
         set -euo pipefail
 

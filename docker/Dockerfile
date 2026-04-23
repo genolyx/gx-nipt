@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip \
     python2 python2-dev \
     curl \
-    openjdk-11-jdk default-jre \
+    openjdk-17-jre-headless \
     git wget unzip \
     zlib1g-dev libbz2-dev liblzma-dev libncurses5-dev \
     libcurl4-openssl-dev libssl-dev libxml2-dev \
@@ -50,7 +50,11 @@ RUN curl https://bootstrap.pypa.io/pip/2.7/get-pip.py | python2.7 && \
 RUN python3 -m pip install --upgrade pip
 
 # Workdirs
-RUN mkdir -p /Work/NIPT/bin /Work/NIPT/data /Work/NIPT/data/bed /Work/NIPT/analysis /Work/NIPT/log /Work/NIPT/fastq
+# /Work/NIPT/* is kept only for legacy tools (picard jar, conda env); all
+# pipeline-owned scripts now live under /opt/gx-nipt/bin/scripts/ and are
+# called directly by Nextflow modules.
+RUN mkdir -p /Work/NIPT/bin /Work/NIPT/analysis /Work/NIPT/log /Work/NIPT/fastq \
+             /opt/gx-nipt/bin/scripts
 
 # ----------------------------
 # External tool: bwa-mem2
@@ -147,14 +151,36 @@ RUN /opt/conda/envs/nipt/bin/pip install \
     plotly \
     pandas==2.2.2 \
     matplotlib==3.8.4 \
-    pysam==0.22.0
+    pysam==0.22.0 \
+    typer \
+    loguru
 
 RUN /opt/conda/envs/nipt/bin/pip install -U git+https://github.com/CenterForMedicalGeneticsGhent/WisecondorX && \
     /opt/conda/envs/nipt/bin/wisecondorx --help || echo "WisecondorX installed"
 
+# CBS.R is the R script called by WisecondorX for circular binary segmentation.
+# The pip-installed wheel omits the include/ package data directory, so we copy
+# it manually to the location WisecondorX expects (os.path.dirname(__file__)/include/).
+COPY bin/wcx_include/CBS.R /tmp/CBS.R
+RUN WCXDIR=$(/opt/conda/envs/nipt/bin/python -c \
+      "import wisecondorx, os; print(os.path.dirname(wisecondorx.__file__))") && \
+    mkdir -p "${WCXDIR}/include" && \
+    cp /tmp/CBS.R "${WCXDIR}/include/CBS.R" && \
+    echo "CBS.R installed at ${WCXDIR}/include/CBS.R"
+
 # Symlinks for convenience
 RUN if [ ! -f /usr/local/bin/wisecondorx ]; then ln -s /opt/conda/envs/nipt/bin/wisecondorx /usr/local/bin/wisecondorx; fi && \
     if [ ! -f /usr/local/bin/readCounter ]; then ln -s /opt/conda/envs/nipt/bin/readCounter /usr/local/bin/readCounter; fi
+
+# ----------------------------
+# Nextflow (launcher container runs Nextflow itself; task containers are
+# spawned on the host daemon via the bind-mounted docker socket — a.k.a.
+# Docker-outside-of-Docker, same pattern as gx-exome).
+# ----------------------------
+RUN curl -s https://get.nextflow.io | bash && \
+    mv nextflow /usr/local/bin/ && \
+    chmod +x /usr/local/bin/nextflow && \
+    nextflow -version
 
 # ----------------------------
 # Wisecondor (Python 2) - original
@@ -165,95 +191,51 @@ RUN git clone https://github.com/VUmcCGP/wisecondor.git /opt/wisecondor && \
     ln -s /opt/wisecondor/wisecondor.py /usr/local/bin/wisecondor
 
 # ----------------------------
-# Wisecondor-FF (local)
+# Pipeline scripts (Nextflow-called)
+#
+# Reference genomes / HMMcopy WIGs / lab WC(X) NPZs / ML models are NOT baked
+# into the image. They are bind-mounted from the host via nextflow.config's
+# docker.runOptions (-v ${params.ref_dir}:${params.ref_dir}:ro).
+# See docs/reference_generation.md for the expected host layout.
+#
+# All scripts are placed under /opt/gx-nipt/bin/scripts/ — the single path
+# that every Nextflow module imports.
 # ----------------------------
-COPY bin/scripts/WisecondorFF /opt/WisecondorFF
-RUN chmod +x /opt/WisecondorFF/wisecondorff && \
-    sed -i 's|/opt/WisecondorFF/main.py|/opt/WisecondorFF/src/main.py|g' /opt/WisecondorFF/wisecondorff && \
-    ln -s /opt/WisecondorFF/wisecondorff /usr/local/bin/wisecondor-ff
+ARG CACHE_BREAK=4
 
-# HMMcopy reference WIG files
-RUN mkdir -p /opt/conda/envs/nipt/share/hmmcopy
-COPY data/wig/hg19.gc.50kb.wig  /opt/conda/envs/nipt/share/hmmcopy/
-COPY data/wig/hg19.map.50kb.wig /opt/conda/envs/nipt/share/hmmcopy/
-COPY data/wig/hg19.gc.10mb.wig  /opt/conda/envs/nipt/share/hmmcopy/
-COPY data/wig/hg19.map.10mb.wig /opt/conda/envs/nipt/share/hmmcopy/
-
-# AWK/R scripts
-COPY bin/scripts/fetus.awk /Work/NIPT/bin/
-COPY bin/scripts/mom.awk   /Work/NIPT/bin/
-COPY bin/scripts/HMMcopy.R /Work/NIPT/bin/
-
-# ----------------------------
-# SeqFF setup
-# ----------------------------
-RUN mkdir -p /opt/nipt/bin/scripts/seqFF_R
-COPY bin/scripts/seqFF_R /opt/nipt/bin/scripts/seqFF_R
-RUN if [ -f /opt/nipt/bin/scripts/seqFF_R/seqff.r ]; then \
-      sed -i 's|load("pd4615-sup-0008-file1.rdata")|load("/opt/nipt/bin/scripts/seqFF_R/pd4615-sup-0008-file1.rdata")|g' \
-        /opt/nipt/bin/scripts/seqFF_R/seqff.r; \
-    fi
-
-# SeqFF wrapper
-RUN printf '#!/bin/bash\nexport PATH=/opt/conda/envs/nipt/bin:$PATH\ncd /opt/nipt/bin/scripts/seqFF_R\n/opt/conda/envs/nipt/bin/Rscript seqff.r "$@"\n' \
-    > /usr/local/bin/seqff && chmod +x /usr/local/bin/seqff
-
-# ----------------------------
-# Pipeline modules & scripts (코드 변경은 여기서부터 캐시 무효)
-# ----------------------------
-ARG CACHE_BREAK=1
-
-COPY bin/scripts/modules/prizm_runner.py            /Work/NIPT/bin/
-COPY bin/scripts/modules/ezd_runner.py              /Work/NIPT/bin/
-COPY bin/scripts/modules/sca_detector.py            /Work/NIPT/bin/
-COPY bin/scripts/modules/process_md_result.py       /Work/NIPT/bin/
-COPY bin/scripts/modules/process_md_result_dev.py   /Work/NIPT/bin/
-COPY bin/scripts/modules/generate_json_output.py    /Work/NIPT/bin/
-COPY bin/scripts/modules/html_review_page.py        /Work/NIPT/bin/
-COPY bin/scripts/modules/gender_detector.py         /Work/NIPT/bin/
-
-COPY bin/scripts/nipt_pipeline.py /Work/NIPT/bin/
-RUN chmod +x /Work/NIPT/bin/nipt_pipeline.py
-
-# MD-only pipeline
-COPY bin/scripts/md_pipeline.py /Work/NIPT/bin/scripts/
-RUN chmod +x /Work/NIPT/bin/scripts/md_pipeline.py
-
-# WC family ref generator
-COPY bin/scripts/generate_wcfamily_reference.sh /Work/NIPT/bin/
-RUN chmod +x /Work/NIPT/bin/generate_wcfamily_reference.sh
-
-# for New WisecondorX build
-COPY data/empty_regions.txt /Work/NIPT/data
+COPY bin/scripts /opt/gx-nipt/bin/scripts
+# Old Wisecondor (Python 2) – used by RUN_WC process for WC-family analysis
+COPY bin/wisecondor /opt/wisecondor
+RUN chmod +x /opt/wisecondor/wisecondor.py
+RUN find /opt/gx-nipt/bin/scripts -type f \( -name '*.sh' -o -name '*.py' -o -name '*.awk' -o -name '*.R' \) -print0 \
+    | xargs -0 chmod +x
 
 # ----------------------------
 # Env vars
 # ----------------------------
-ENV SRC_DIR=/Work/NIPT/bin \
-    ANALYSIS_DIR=/Work/NIPT/analysis \
-    LOG_DIR=/Work/NIPT/log \
-    FASTQ_DIR=/Work/NIPT/fastq \
+ENV GXNIPT_SCRIPTS=/opt/gx-nipt/bin/scripts \
     BWA2=bwa-mem2 \
     SAMTools=samtools \
     PICARD=picard \
     qualimap=qualimap \
     WC=/opt/wisecondor \
     WCX=wisecondorx \
-    WCFF=wisecondor-ff \
     HMMcopy=/opt/conda/envs/nipt \
     PYTHON2=python2.7 \
     Rscript=/opt/conda/envs/nipt/bin/Rscript \
     R_HOME=/opt/conda/envs/nipt/lib/R \
     R_LIBS_USER=/opt/conda/envs/nipt/lib/R/library \
-    PATH=/Work/NIPT/bin:/opt/conda/envs/nipt/bin:$PATH
+    PATH=/opt/gx-nipt/bin/scripts:/opt/conda/envs/nipt/bin:$PATH
 
 # conda env auto-activate on shell
 RUN echo "source /opt/conda/etc/profile.d/conda.sh && conda activate nipt" >> /root/.bashrc
 
-WORKDIR /Work/NIPT
+WORKDIR /opt/gx-nipt
 
 # ----------------------------
-# Entrypoint
+# No default ENTRYPOINT.
+# Nextflow invokes specific tools inside each process; see nextflow.config's
+# docker.runOptions which also includes --entrypoint "" defensively.
+# For interactive use: `docker run --rm -it gx-nipt:latest bash`.
 # ----------------------------
-ENTRYPOINT ["python3", "/Work/NIPT/bin/nipt_pipeline.py"]
-CMD ["--help"]
+CMD ["/bin/bash"]

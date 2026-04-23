@@ -22,9 +22,12 @@ process RUN_MD_DETECTION {
         path "${sample_name}.md_result.tsv", emit: md_result
 
     script:
-        def bed_dir = "/data/refs/${labcode}/bed"
+        def bed_dir = "${params.ref_dir}/labs/${labcode}/bed"
         """
         set -euo pipefail
+
+        export TMPDIR="\${NXF_TASK_WORKDIR}"
+        export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
 
         python3 /opt/gx-nipt/bin/scripts/modules/process_md_result.py \\
             --sample ${sample_name} \\

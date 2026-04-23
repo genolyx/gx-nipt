@@ -2,6 +2,11 @@
  * =========================================================
  *  Report Workflow
  *  All results → JSON + HTML report → Output directory
+ *
+ *  Upstream channels that carry per-group tuples
+ *  (sample, group, path) — EZD / PRIZM — are first
+ *  reduced to their path component before being collected
+ *  into a single staging bundle for GENERATE_JSON.
  * =========================================================
  */
 
@@ -12,26 +17,29 @@ include { COPY_TO_OUTPUT }   from '../modules/report'
 workflow REPORT_WORKFLOW {
     take:
         sample_name    // string
-        ch_ezd_result  // channel
-        ch_prizm_result// channel
-        ch_ff_result   // channel
-        ch_md_result   // channel
-        ch_qc_result   // channel
+        ch_ezd_result  // channel: tuple(sample, group, path)
+        ch_prizm_result// channel: tuple(sample, group, path)
+        ch_ff_result   // channel: path
+        ch_md_result   // channel: path
+        ch_qc_result   // channel: path
         ch_config      // channel: pipeline_config.json
         labcode        // string
         analysisdir    // string
         outdir         // string
 
     main:
-        // Collect all upstream results before generating report
-        ch_all_results = ch_ezd_result
-            .mix(ch_prizm_result)
+        // Normalise per-group tuple channels to plain path channels
+        // so `.mix().collect()` produces a clean list of files.
+        ch_ezd_paths    = ch_ezd_result.map   { sid, grp, p -> p }
+        ch_prizm_paths  = ch_prizm_result.map { sid, grp, p -> p }
+
+        ch_all_results = ch_ezd_paths
+            .mix(ch_prizm_paths)
             .mix(ch_ff_result)
             .mix(ch_md_result)
             .mix(ch_qc_result)
             .collect()
 
-        // Generate final JSON output
         GENERATE_JSON(
             sample_name,
             ch_all_results,
@@ -40,7 +48,6 @@ workflow REPORT_WORKFLOW {
             analysisdir
         )
 
-        // Generate HTML review page
         GENERATE_HTML(
             sample_name,
             GENERATE_JSON.out.json_file,
@@ -49,7 +56,6 @@ workflow REPORT_WORKFLOW {
             analysisdir
         )
 
-        // Copy results to portal-compatible output directory
         COPY_TO_OUTPUT(
             sample_name,
             GENERATE_JSON.out.json_file,

@@ -2234,7 +2234,8 @@ def run_multiple_prizm_analysis(
         os.makedirs(analysis_output_dir, exist_ok=True)
 
         # Define reference file paths based on gender and analysis type
-        ref_base_path = f"{data_dir}/refs/{labcode}/PRIZM/{analysis_type}"
+        # gx-nipt reference layout: <ref_dir>/labs/<labcode>/PRIZM/<analysis_type>/
+        ref_base_path = f"{data_dir}/labs/{labcode}/PRIZM/{analysis_type}"
 
         reference_files = {
             "mean_file": f"{ref_base_path}/{gender_prefix}_mean.csv",
@@ -2684,5 +2685,206 @@ def run_prizm_analysis(
     return results
 
 
+# =========================================================
+#  Adapter CLI: Nextflow-compatible entry point
+#
+#  Used by modules/prizm.nf. Coexists with the legacy `main()`
+#  which consumes `-c10/-m/-s/-m10/-s10/...`. The adapter selects
+#  reference files from a flat ref-dir based on the gender parsed
+#  from the FF/gender file and then delegates to run_prizm_analysis().
+# =========================================================
+def _parse_gender_from_file(path: str) -> str:
+    """Return 'male' or 'female' prefix from a gender.txt / fetal_fraction.txt file.
+
+    Expected formats:
+      - gender.txt  (preferred): contains a line `final_gender\t<MALE|FEMALE>`
+      - fetal_fraction.txt      : no gender — raises ValueError
+
+    Also accepts lowercase/mixed case. Returns 'male' or 'female'.
+    """
+    if not path or not os.path.exists(path):
+        raise ValueError(f"Gender file not found: {path}")
+
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            # final_gender<TAB>MALE|FEMALE  (or karyotype XY|XX written by ff_gender_improved.py)
+            if line.lower().startswith("final_gender"):
+                parts = re.split(r"[\t\s]+", line, maxsplit=1)
+                if len(parts) == 2:
+                    val = parts[1].strip().upper()
+                    if val in ("MALE", "M", "XY"):
+                        return "male"
+                    if val in ("FEMALE", "F", "XX"):
+                        return "female"
+    raise ValueError(
+        f"Could not parse final_gender from {path}. "
+        "Expected a line like 'final_gender\\tMALE' or 'final_gender\\tFEMALE' (or XY/XX)."
+    )
+
+
+def _nf_main():
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "PRIZM adapter CLI (Nextflow). Runs PRIZM for a single "
+            "(sample, group) and writes results flat into --outdir."
+        )
+    )
+    parser.add_argument("--sample", required=True)
+    parser.add_argument(
+        "--group", required=True, choices=["orig", "fetus", "mom"]
+    )
+    parser.add_argument(
+        "--count-file",
+        required=True,
+        help="HMMcopy 10mb normalization TXT "
+        "(e.g. <sample>.of_<group>.10mb.wig.Normalization.txt)",
+    )
+    parser.add_argument(
+        "--ref-dir",
+        required=True,
+        help=(
+            "PRIZM reference directory for this group, expected to contain "
+            "{male|female}_{mean,sd,10mb_mean,10mb_sd,10mb_all_mean,10mb_all_sd}.csv. "
+            "Typically <top_ref>/labs/<labcode>/PRIZM/<group>."
+        ),
+    )
+    parser.add_argument(
+        "--gender-file",
+        default=None,
+        help="gender.txt from GENDER_DECISION (contains 'final_gender\\tMALE|FEMALE')",
+    )
+    parser.add_argument(
+        "--ff-file",
+        default=None,
+        help=(
+            "Legacy alias for --gender-file. Must contain a 'final_gender' line "
+            "for gender resolution."
+        ),
+    )
+    parser.add_argument("--labcode", default=None, help="Lab code (informational)")
+    parser.add_argument(
+        "--outdir", required=True, help="Flat output dir for QC/plots"
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="pipeline_config.json (optional; used for QC cutoff / plot DPI)",
+    )
+    args = parser.parse_args()
+
+    global logger
+    logger = setup_logging(False)
+
+    gender_src = args.gender_file or args.ff_file
+    if not gender_src:
+        logger.error("--gender-file (or --ff-file with gender info) is required.")
+        sys.exit(2)
+
+    try:
+        gender_prefix = _parse_gender_from_file(gender_src)
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(2)
+
+    logger.info(
+        f"[PRIZM adapter] {args.sample}/{args.group} gender={gender_prefix}"
+    )
+
+    cfg = {}
+    if args.config and os.path.exists(args.config):
+        try:
+            with open(args.config) as fh:
+                cfg = json.load(fh)
+        except Exception as e:
+            logger.warning(f"Failed to parse config {args.config}: {e}")
+
+    qc_cutoff = (
+        cfg.get("QC", {}).get(f"{args.group}_biqc")
+        or cfg.get("QC", {}).get("biqc")
+        or 3.0
+    )
+    dpi = cfg.get("PRIZM", {}).get("resolution_dpi", 200)
+
+    ref_dir = args.ref_dir.rstrip("/")
+    mean_file         = f"{ref_dir}/{gender_prefix}_mean.csv"
+    sd_file           = f"{ref_dir}/{gender_prefix}_sd.csv"
+    mean_10mb_file    = f"{ref_dir}/{gender_prefix}_10mb_mean.csv"
+    sd_10mb_file      = f"{ref_dir}/{gender_prefix}_10mb_sd.csv"
+    mean_10mb_all_fp  = f"{ref_dir}/{gender_prefix}_10mb_all_mean.csv"
+    sd_10mb_all_fp    = f"{ref_dir}/{gender_prefix}_10mb_all_sd.csv"
+
+    missing = [p for p in (mean_file, sd_file, mean_10mb_file, sd_10mb_file)
+               if not os.path.exists(p)]
+    if missing:
+        logger.error(f"[PRIZM adapter] Missing required reference files: {missing}")
+        sys.exit(3)
+
+    enable_10mb_all = (
+        os.path.exists(mean_10mb_all_fp) and os.path.exists(sd_10mb_all_fp)
+    )
+    if not enable_10mb_all:
+        logger.warning(
+            f"[PRIZM adapter] 10mb_all references not found under {ref_dir}; "
+            "proceeding without 10mb_all computation."
+        )
+
+    outdir = os.path.abspath(args.outdir)
+    os.makedirs(outdir, exist_ok=True)
+
+    results = run_prizm_analysis(
+        count_file_10mb=args.count_file,
+        mean_file=mean_file,
+        sd_file=sd_file,
+        mean_10mb_file=mean_10mb_file,
+        sd_10mb_file=sd_10mb_file,
+        mean_10mb_all_file=mean_10mb_all_fp if enable_10mb_all else None,
+        sd_10mb_all_file=sd_10mb_all_fp if enable_10mb_all else None,
+        sample_name=args.sample,
+        qc_cutoff=qc_cutoff,
+        skip_plots=False,
+        output_dir=outdir,
+        enable_10mb_all=enable_10mb_all,
+        group=args.group,
+        dpi=dpi,
+    )
+
+    if results is None:
+        logger.error("[PRIZM adapter] run_prizm_analysis returned None")
+        sys.exit(1)
+
+    try:
+        run_statistical_trisomy_detection(
+            results.zscore_chr, outdir, f"{args.sample}_{args.group}"
+        )
+    except Exception as e:
+        logger.warning(
+            f"[PRIZM adapter] Statistical trisomy detection skipped: {e}"
+        )
+
+    try:
+        create_prizm_summary_report(
+            f"{args.sample}_{args.group}", results, outdir
+        )
+    except Exception as e:
+        logger.warning(f"[PRIZM adapter] Summary report skipped: {e}")
+
+    logger.info(
+        f"[PRIZM adapter] {args.sample}/{args.group} -> {outdir} done."
+    )
+
+
 if __name__ == "__main__":
-    main()
+    # Detect Nextflow-style invocation by the presence of long-form
+    # arguments that the legacy CLI never used.
+    argv = sys.argv[1:]
+    _nf_flags = ("--sample", "--group", "--count-file", "--ref-dir", "--outdir")
+    if any(flag in argv for flag in _nf_flags):
+        _nf_main()
+    else:
+        main()

@@ -3,7 +3,13 @@
 .nextflow.log*
 work/
 results/
+
+# Pipeline runtime directories (generated data — never committed)
+analysis/
 output/
+log/
+src/
+refs/
 
 # Python
 __pycache__/

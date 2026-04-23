@@ -61,6 +61,10 @@ include { WC_WORKFLOW }         from './workflows/wisecondor'
 include { MD_WORKFLOW }         from './workflows/microdeletion'
 include { REPORT_WORKFLOW }     from './workflows/report'
 
+// Direct import used only in algorithm_only mode, where ALIGN_WORKFLOW is skipped
+// and we still need to produce the (orig, fetus, mom) trio from an existing BAM.
+include { SAMTOOLS_SPLIT_FETUS_MOM } from './modules/samtools'
+
 // ─────────────────────────────────────────────────────────
 // Parameter defaults (overridden by nextflow.config or CLI)
 // ─────────────────────────────────────────────────────────
@@ -178,10 +182,19 @@ workflow {
         ch_bam   = Channel.fromPath(params.from_bam, checkIfExists: true)
         ch_fastq = Channel.empty()
     } else {
+        // CLI may pass either bare filenames (resolved under
+        // <root_dir>/fastq/<work_dir>/<sample>/) *or* full host paths when
+        // reads live outside root_dir (e.g. ken-nipt). Do not join absolute paths.
         def fastq_dir = "${root_dir}/fastq/${work_dir}/${sample_name}"
+        def resolve_fq = { p ->
+            def s = p as String
+            (new File(s).isAbsolute()
+                ? file(s, checkIfExists: true)
+                : file("${fastq_dir}/${s}", checkIfExists: true))
+        }
         ch_fastq = Channel.of([
-            file("${fastq_dir}/${params.fastq_r1}", checkIfExists: true),
-            file("${fastq_dir}/${params.fastq_r2}", checkIfExists: true)
+            resolve_fq(params.fastq_r1),
+            resolve_fq(params.fastq_r2)
         ])
         ch_bam = Channel.empty()
     }
@@ -208,6 +221,7 @@ workflow {
             analysisdir
         )
         ch_proper_bam = ALIGN_WORKFLOW.out.proper_bam
+        ch_bam_trio   = ALIGN_WORKFLOW.out.bam_trio
 
         // ── QC (parallel with alignment output) ───────────
         QC_WORKFLOW(
@@ -219,41 +233,50 @@ workflow {
         )
         ch_qc_passed = QC_WORKFLOW.out.qc_result
     } else {
-        // algorithm_only: skip alignment, use existing BAM
-        ch_proper_bam = Channel.fromPath(
-            "${analysisdir}/${sample_name}.proper_paired.bam",
-            checkIfExists: true
+        // algorithm_only: skip alignment, use existing BAM and (re)generate
+        // the (orig, fetus, mom) trio by re-running the TLEN-based split.
+        def pp_bam_path = "${analysisdir}/${sample_name}.proper_paired.bam"
+        def pp_bai_path = "${analysisdir}/${sample_name}.proper_paired.bam.bai"
+        ch_proper_bam = Channel.fromPath(pp_bam_path, checkIfExists: true)
+        def ch_proper_bai = Channel.fromPath(pp_bai_path, checkIfExists: true)
+
+        SAMTOOLS_SPLIT_FETUS_MOM(
+            sample_name,
+            ch_proper_bam,
+            ch_proper_bai,
+            analysisdir
         )
-        ch_qc_passed = Channel.value(true)
+        ch_bam_trio  = SAMTOOLS_SPLIT_FETUS_MOM.out.trio
+
+        // No QC re-run in algorithm_only mode — stage a sentinel so the
+        // report collector still fires exactly once.
+        ch_qc_passed = Channel.value(file('NO_FILE'))
     }
 
-    // ── HMMcopy (parallel with FF/Gender) ─────────────────
-    // Run first so bincount is available for gx-FF
+    // ── HMMcopy (orig / fetus / mom) ──────────────────────
     HMMCOPY_WORKFLOW(
-        sample_name,
-        ch_proper_bam,
+        ch_bam_trio,
         labcode,
         analysisdir
     )
-    ch_norm_50kb  = HMMCOPY_WORKFLOW.out.norm_50kb
-    ch_norm_10mb  = HMMCOPY_WORKFLOW.out.norm_10mb
-    ch_count_10mb = HMMCOPY_WORKFLOW.out.count_10mb
-
-    // The 50kb bin count file (HMMcopy readCounter output) is passed to
-    // gx-FF so it can skip re-counting and use the already-computed bins.
-    ch_bincount_50kb = HMMCOPY_WORKFLOW.out.bincount_50kb  // path or NO_FILE channel
+    ch_norm_50kb = HMMCOPY_WORKFLOW.out.norm_50kb   // (sample, group, path) for EZD
+    ch_norm_10mb = HMMCOPY_WORKFLOW.out.norm_10mb   // (sample, group, path) for PRIZM
 
     // ── Fetal Fraction & Gender ───────────────────────────
+    // gx-FF bincount input is unused when gxff_model is absent — pass NO_FILE.
+    ch_bincount_sentinel = Channel.value(file('NO_FILE'))
+
     FF_GENDER_WORKFLOW(
         sample_name,
         ch_proper_bam,
-        ch_bincount_50kb,
+        ch_bincount_sentinel,
         ch_config,
         labcode,
         analysisdir,
         gxff_model_path
     )
-    ch_ff_result = FF_GENDER_WORKFLOW.out.ff_result
+    ch_ff_result  = FF_GENDER_WORKFLOW.out.ff_result
+    ch_gender_txt = FF_GENDER_WORKFLOW.out.gender_txt
 
     // Log which FF method was used
     FF_GENDER_WORKFLOW.out.ff_ensemble
@@ -261,33 +284,29 @@ workflow {
             log.info "[FF] Sample ${sid}: ensemble FF result -> ${tsv}"
         }
 
-    // ── EZD (depends on HMMcopy 50kb) ─────────────────────
+    // ── EZD (depends on HMMcopy 50kb per-group) ───────────
     EZD_WORKFLOW(
-        sample_name,
         ch_norm_50kb,
-        ch_ff_result,
         ch_config,
         labcode,
         analysisdir
     )
     ch_ezd_result = EZD_WORKFLOW.out.ezd_result
 
-    // ── PRIZM (depends on HMMcopy 10mb count) ─────────────
+    // ── PRIZM (depends on HMMcopy 10mb per-group + gender) ─
     PRIZM_WORKFLOW(
-        sample_name,
-        ch_count_10mb,
-        ch_ff_result,
+        ch_norm_10mb,
+        ch_gender_txt,
         ch_config,
         labcode,
         analysisdir
     )
     ch_prizm_result = PRIZM_WORKFLOW.out.prizm_result
 
-    // ── Wisecondor + gx-cnv (parallel) ────────────────────
+    // ── Wisecondor + gx-cnv (trio BAM + gender) ───────────
     WC_WORKFLOW(
-        sample_name,
-        ch_proper_bam,
-        ch_ff_result,
+        ch_bam_trio,
+        ch_gender_txt,
         ch_config,
         labcode,
         analysisdir,

@@ -16,6 +16,7 @@ include { SAMTOOLS_SORT_INDEX }      from '../modules/samtools'
 include { PICARD_MARKDUP }           from '../modules/picard'
 include { SAMTOOLS_FILTER_UNIQUE }   from '../modules/samtools'
 include { SAMTOOLS_PROPER_PAIRED }   from '../modules/samtools'
+include { SAMTOOLS_SPLIT_FETUS_MOM } from '../modules/samtools'
 include { SCRATCH_SETUP;
           SCRATCH_MOVE_FINAL }       from '../modules/scratch'
 
@@ -32,7 +33,13 @@ workflow ALIGN_WORKFLOW {
         // ── Case 1: Start from existing proper_paired.bam ─
         if (params.from_bam) {
             ch_proper_bam     = ch_bam
-            ch_proper_bai     = Channel.empty()
+            // When re-entering from an existing BAM, the index may or may
+            // not be alongside. Try to pick it up; SPLIT process below
+            // depends on .bai being present.
+            ch_proper_bai = ch_bam.map { b ->
+                def idx = file("${b}.bai")
+                idx.exists() ? idx : null
+            }
             ch_use_ssd_result = false
 
         } else {
@@ -126,6 +133,17 @@ workflow ALIGN_WORKFLOW {
             }
         }
 
+        // ── Step 8: TLEN-based split (orig / fetus / mom) ─────
+        // proper_paired.bam → of_orig.bam + of_fetus.bam + of_mom.bam
+        // Downstream HMMcopy / PRIZM / WC(X) expect all three.
+        SAMTOOLS_SPLIT_FETUS_MOM(
+            sample_name,
+            ch_proper_bam,
+            ch_proper_bai,
+            analysisdir
+        )
+
     emit:
         proper_bam = ch_proper_bam
+        bam_trio   = SAMTOOLS_SPLIT_FETUS_MOM.out.trio
 }

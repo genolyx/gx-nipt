@@ -1937,6 +1937,25 @@ if __name__ == "__main__":
         help="Target bed directory",
     )
     pgroup.add_argument("-version", dest="version", help="NIPT version (V1.0)")
+    pgroup.add_argument(
+        "-ref_dir",
+        dest="ref_dir",
+        help="Reference directory (for EZD thresholds etc.)",
+        default="",
+    )
+    pgroup.add_argument(
+        "-age",
+        dest="age",
+        type=int,
+        default=35,
+        help="Maternal age (default: 35)",
+    )
+    pgroup.add_argument(
+        "-config_file",
+        dest="config_file",
+        help="Pipeline config JSON file",
+        default=None,
+    )
 
     ogroup = parser.add_argument_group("Options")
     ogroup.add_argument(
@@ -1958,19 +1977,45 @@ if __name__ == "__main__":
 
     # Generate JSON
     # data = build_nipt_json(args.analysis_dir, args.output_dir, args.sample_name, args.version, args.config_file, args.target_bed_dir)
-    data, wcx_chr_dict = build_nipt_json(
+
+    # Derive fetus_gender from the published gender.txt produced by FF_GENDER_WORKFLOW
+    _gender_txt = os.path.join(
+        args.analysis_dir, args.sample_name, "Output_FF", f"{args.sample_name}.gender.txt"
+    )
+    fetus_gender = "F"  # safe default
+    if os.path.isfile(_gender_txt):
+        for _line in open(_gender_txt):
+            _parts = _line.strip().split()
+            if len(_parts) >= 2 and _parts[0].lower() == "final_gender":
+                _g = _parts[1].upper()
+                if _g in ("XY", "MALE", "M"):
+                    fetus_gender = "M"
+                else:
+                    fetus_gender = "F"
+                break
+
+    # Load pipeline config dict (optional)
+    _config = {}
+    if args.config_file and os.path.isfile(args.config_file):
+        import json as _json
+        with open(args.config_file) as _f:
+            _config = _json.load(_f)
+
+    # build_nipt_json() saves the file internally and returns (json_path, wcx_chr_dict).
+    # Do NOT write again — that would overwrite the real JSON with the path string.
+    json_path, wcx_chr_dict = build_nipt_json(
         args.analysis_dir,
         args.output_dir,
+        args.ref_dir,
         args.sample_name,
+        fetus_gender,
+        args.age,
         args.version,
         args.target_bed_dir,
+        _config,
     )
 
-    # Save JSON file
-    file_path = f"{args.output_dir}/{args.sample_name}/{args.sample_name}.json"
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    if not json_path:
+        raise RuntimeError("build_nipt_json() failed to produce a JSON file")
 
-    with open(file_path, "w") as json_file:
-        json.dump(data, json_file, indent=2)
-
-    logger.info(f"NIPT JSON has been saved at {file_path}")
+    logger.info(f"NIPT JSON has been saved at {json_path}")

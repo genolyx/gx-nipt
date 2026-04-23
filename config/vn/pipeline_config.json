@@ -1,0 +1,165 @@
+{
+  "QC": {
+    "max_fq_size": 30000000,
+    "downsample_size": 7500000,
+    "bwa_threads": 16,
+    "samtools_threads": 6,
+    "samtools_memory": "8G",
+    "picard_memory": "20G",
+    "orig_biqc": 4.0,
+    "fetus_biqc": 4.5,
+    "mom_biqc": 4.5,
+    "number_of_reads": 10000000,
+    "number_of_mapped_reads": 9500000,
+    "mapping_rate": 85.0,
+    "duplication_rate": 40.0,
+    "GC_content_min": 33.0,
+    "GC_content_max": 55.0,
+    "YFF": 4.0,
+    "seqFF": 4.0,
+    "FF_Ratio": 2.5
+  },
+  "FF_Gender_Config": {
+    "fragment_size_cutoff": 160,
+    "gd_1_threshold": 0.01,
+    "gd_2_threshold": 0.4,
+    "gd_3_threshold": 0.02
+  },
+  "lab_bed_paths": {
+    "y_regions_09": "/home/ken/gx-nipt/refs/bed/common/chrY_target_0.9.bed",
+    "y_regions_noPARs": "/home/ken/gx-nipt/refs/bed/common/chrY_noPARs.bed",
+    "y_regions_target": "/home/ken/gx-nipt/refs/bed/common/chrY_target.bed",
+    "autosome_control": "/home/ken/gx-nipt/refs/bed/common/autosome_control.bed"
+  },
+  "WC": {
+    "orig_call_threshold": 6.0,
+    "fetus_call_threshold": 6.0,
+    "mom_call_threshold": 15.0,
+    "binsize": 200000,
+    "ref": "200k",
+    "cytoband": "/home/ken/gx-nipt/refs/bed/common/common/cytoBand.txt"
+  },
+  "WCX": {
+    "orig_threshold": 6,
+    "fetus_threshold": 6,
+    "mom_threshold": 15,
+    "orig_call_threshold": 6.0,
+    "fetus_call_threshold": 6.0,
+    "mom_call_threshold": 15.0,
+    "binsize": 200000,
+    "ref": "200k",
+    "male_ref": "M_200k",
+    "female_ref": "F_200k"
+  },
+  "WCFF": {
+    "orig_call_threshold": 6.0,
+    "fetus_call_threshold": 6.0,
+    "mom_call_threshold": 15.0,
+    "binsize": 200000,
+    "ref": "200k",
+    "cytoband": "/home/ken/gx-nipt/refs/bed/common/common/cytoBand.txt"
+  },
+  "PRIZM": {
+    "qc_cutoff": 3.0,
+    "resolution_dpi": 200
+  },
+  "EZD": {
+    "qc_cutoff": 3.0,
+    "resolution_dpi": 200
+  },
+  "MD_Target_8": {
+    "bed": "TargetDB_md8.bed",
+    "region1": {
+      "less_than": 1000000,
+      "min_length": 200000
+    },
+    "region2": {
+      "less_than": 5000000,
+      "min_length": 1000000
+    },
+    "region3": {
+      "less_than": 10000000,
+      "min_length": 2000000
+    },
+    "region4": {
+      "greater_than": 10000000,
+      "min_length": 5000000
+    }
+  },
+  "MD_Target_108": {
+    "bed": "TargetDB_md108.bed",
+    "region1": {
+      "less_than": 1000000,
+      "min_length": 200000
+    },
+    "region2": {
+      "less_than": 5000000,
+      "min_length": 1000000
+    },
+    "region3": {
+      "less_than": 10000000,
+      "min_length": 2000000
+    },
+    "region4": {
+      "greater_than": 10000000,
+      "min_length": 5000000
+    }
+  },
+  "MD_Target_320": {
+    "bed": "TargetDB_md320.bed",
+    "region1": {
+      "less_than": 1000000,
+      "min_length": 200000
+    },
+    "region2": {
+      "less_than": 5000000,
+      "min_length": 1000000
+    },
+    "region3": {
+      "less_than": 10000000,
+      "min_length": 2000000
+    },
+    "region4": {
+      "greater_than": 10000000,
+      "min_length": 5000000
+    }
+  },
+  "MD_Target_87": {
+    "bed": "TargetDB_md87.bed",
+    "region1": {
+      "less_than": 1000000,
+      "min_length": 200000
+    },
+    "region2": {
+      "less_than": 5000000,
+      "min_length": 1000000
+    },
+    "region3": {
+      "less_than": 10000000,
+      "min_length": 2000000
+    },
+    "region4": {
+      "greater_than": 10000000,
+      "min_length": 6000000
+    }
+  },
+  "MD_Target_141": {
+    "bed": "TargetDB_md141.bed",
+    "region1": {
+      "less_than": 1000000,
+      "min_length": 200000
+    },
+    "region2": {
+      "less_than": 5000000,
+      "min_length": 1000000
+    },
+    "region3": {
+      "less_than": 10000000,
+      "min_length": 2000000
+    },
+    "region4": {
+      "greater_than": 10000000,
+      "min_length": 6000000
+    }
+  }
+}

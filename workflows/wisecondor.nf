@@ -1,22 +1,22 @@
 /*
  * =========================================================
- *  Wisecondor / gx-cnv Workflow
+ *  Wisecondor / gx-cnv Workflow (trio version)
  *
- *  CNV detection stack (parallel execution):
- *    WC   – Wisecondor (legacy, per group: orig/fetus/mom)
- *    WCX  – WisecondorX (per group: orig/fetus/mom)
- *    gx-cnv – Hybrid dual-track (Track A Z-score CBS + Track B PCA Mahalanobis)
+ *  CNV detection stack (parallel execution per group):
+ *    WC   – Wisecondor    (orig / fetus / mom)
+ *    WCX  – WisecondorX   (orig / fetus / mom, gender-aware)
+ *    gx-cnv – Hybrid dual-track (orig BAM only, genome-wide)
  *
- *  Validation mode:
- *    When gx-cnv reference is provided, gx-cnv runs in parallel with WCX.
- *    GXCNV_COMPARE produces a per-sample concordance report.
- *    Once gx-cnv is validated, WCX can be removed by setting
- *    params.run_wcx = false in nextflow.config.
+ *  Inputs:
+ *    bam_trio    – tuple emitted by SAMTOOLS_SPLIT_FETUS_MOM
+ *                  (sample, o_bam, o_bai, f_bam, f_bai, m_bam, m_bai)
+ *    gender_txt  – path to <sample>.gender.txt produced by
+ *                  GENDER_DECISION (carries final_gender line).
  *
- *  Output:
- *    wc_result   – WC/WCX results (existing downstream consumers unchanged)
- *    gxcnv_calls – gx-cnv HIGH_RISK calls TSV
- *    gxcnv_comparison – concordance report vs WCX
+ *  Emits per-group tuples:
+ *    wc_result          – (sample, group, result_path) for WC ∪ WCX
+ *    gxcnv_calls        – (sample, calls_tsv) — orig only
+ *    gxcnv_comparison   – (sample, comparison_tsv) — orig only
  * =========================================================
  */
 
@@ -28,9 +28,8 @@ include { GXCNV_COMPARE }   from '../modules/gxcnv'
 
 workflow WC_WORKFLOW {
     take:
-        sample_name      // val: sample identifier
-        ch_bam           // tuple: (sample_id, bam, bai)
-        ch_ff_result     // path: fetal_fraction result (FF_FINAL from ensemble)
+        bam_trio         // channel: tuple(sample, o_bam, o_bai, f_bam, f_bai, m_bam, m_bai)
+        gender_txt       // path channel: <sample>.gender.txt
         ch_config        // path: pipeline_config.json
         labcode          // val: lab identifier
         analysisdir      // val: output directory root
@@ -40,30 +39,30 @@ workflow WC_WORKFLOW {
         gxcnv_thresh_p   // val: Track B p-value threshold (default: 0.05)
 
     main:
-        ch_groups = Channel.of('orig', 'fetus', 'mom')
+        // ── Flatten trio → per-group (sample, group, bam, bai) tuples ──
+        ch_bam_by_group = bam_trio.flatMap { t ->
+            def sample = t[0]
+            [
+                tuple(sample, 'orig',  t[1], t[2]),
+                tuple(sample, 'fetus', t[3], t[4]),
+                tuple(sample, 'mom',   t[5], t[6]),
+            ]
+        }
 
-        // ── WC (Wisecondor) ───────────────────────────────────────────────────
+        // ── WC (Wisecondor) ─────────────────────────────────────────────
         RUN_WC(
-            sample_name,
-            ch_groups,
-            ch_bam,
-            ch_ff_result,
+            ch_bam_by_group,
             ch_config,
             labcode,
             analysisdir
         )
 
-        // ── WCX (WisecondorX) ─────────────────────────────────────────────────
-        // Controlled by params.run_wcx (default: true).
-        // Set params.run_wcx = false once gx-cnv is validated.
+        // ── WCX (WisecondorX) ───────────────────────────────────────────
         ch_wcx_result = Channel.empty()
-
         if ( params.run_wcx ) {
             RUN_WCX(
-                sample_name,
-                ch_groups,
-                ch_bam,
-                ch_ff_result,
+                ch_bam_by_group,
+                gender_txt,
                 ch_config,
                 labcode,
                 analysisdir
@@ -71,80 +70,50 @@ workflow WC_WORKFLOW {
             ch_wcx_result = RUN_WCX.out.wcx_result
         }
 
-        // ── gx-cnv (parallel, validation mode) ───────────────────────────────
-        // Only runs when a pre-built reference NPZ is provided.
+        // ── gx-cnv (orig BAM only, validation mode) ─────────────────────
         ch_gxcnv_calls      = Channel.empty()
         ch_gxcnv_comparison = Channel.empty()
 
         if ( gxcnv_reference.name != 'NO_FILE' ) {
+            // gxcnv operates on the maternal-plasma (orig) BAM
+            ch_bam_orig = bam_trio.map { t -> tuple(t[0], t[1], t[2]) }
 
-            // Step 1: BAM → NPZ
             GXCNV_CONVERT(
-                ch_bam,
+                ch_bam_orig,
                 gxcnv_bin_size,
-                file('NO_FILE')   // no blacklist by default; override via params
+                file('NO_FILE')   // optional blacklist BED — not used by default
             )
 
-            // Step 2: Extract FF_FINAL for passing to gxcnv predict
-            // ff_result TSV has column FF_FINAL; extract as a value
-            ch_ff_val = ch_ff_result
-                .map { sid, tsv ->
-                    def ff = "NA"
-                    try {
-                        tsv.withReader { r ->
-                            def header = null
-                            r.eachLine { line ->
-                                if ( line.startsWith("#") ) return
-                                if ( header == null ) { header = line.split("\\t"); return }
-                                def cols = line.split("\\t")
-                                def idx  = header.findIndexOf { it == "FF_FINAL" }
-                                if ( idx >= 0 ) ff = cols[idx]
-                            }
-                        }
-                    } catch (e) { /* keep NA */ }
-                    tuple( sid, ff )
-                }
-
-            // Step 3: Predict CNVs
-            ch_predict_input = GXCNV_CONVERT.out.npz
-                .join( ch_ff_val, remainder: true )
-                .map { sid, npz, ff -> tuple( sid, npz, ff ?: "NA" ) }
-
             GXCNV_PREDICT(
-                ch_predict_input.map { sid, npz, ff -> tuple(sid, npz) },
+                GXCNV_CONVERT.out.npz,
                 gxcnv_reference,
                 gxcnv_thresh_z,
                 gxcnv_thresh_p,
-                ch_predict_input.map { sid, npz, ff -> ff }
+                Channel.value('NA')   // FF passed as placeholder (FF join TODO)
             )
-
             ch_gxcnv_calls = GXCNV_PREDICT.out.calls_tsv
 
-            // Step 4: Compare gx-cnv vs WCX (only when WCX is also running)
+            // Compare against WCX orig track (if WCX enabled)
             if ( params.run_wcx ) {
-                // WCX aberrations file: assume it is published under analysisdir
-                // Construct expected path from sample_name and analysisdir
-                ch_wcx_aberrations = ch_wcx_result
-                    .map { sid, result_dir ->
-                        def aber = file("${result_dir}/aberrations.bed")
-                        tuple( sid, aber )
-                    }
+                ch_wcx_orig = ch_wcx_result
+                    .filter { sid, grp, p -> grp == 'orig' }
+                    .map    { sid, grp, p -> tuple(sid, p) }
 
                 ch_compare_input = GXCNV_PREDICT.out.calls_tsv
                     .join( GXCNV_PREDICT.out.regions_tsv )
-                    .join( ch_wcx_aberrations, remainder: true )
+                    .join( ch_wcx_orig, remainder: true )
                     .map { sid, calls, regions, aber ->
                         def aber_file = (aber == null) ? file('NO_FILE') : aber
                         tuple( sid, calls, regions, aber_file )
                     }
-
                 GXCNV_COMPARE( ch_compare_input )
                 ch_gxcnv_comparison = GXCNV_COMPARE.out.comparison
             }
         }
 
     emit:
-        wc_result          = RUN_WC.out.wc_result.mix( ch_wcx_result )
-        gxcnv_calls        = ch_gxcnv_calls
-        gxcnv_comparison   = ch_gxcnv_comparison
+        // Each element: (sample, group, result_path) — WC ∪ WCX
+        wc_result        = RUN_WC.out.wc_result.mix( ch_wcx_result )
+        gxcnv_calls      = ch_gxcnv_calls
+        gxcnv_comparison = ch_gxcnv_comparison
 }

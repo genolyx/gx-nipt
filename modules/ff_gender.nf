@@ -61,7 +61,7 @@ process CALCULATE_YFF2 {
         path "${sample_name}.yff2.txt", emit: yff2_txt
 
     script:
-        def wig_norm = "${analysisdir}/${sample_name}/Output_hmmcopy/${sample_name}.proper_paired.50kb.wig.Normalization.txt"
+        def wig_norm = "${analysisdir}/${sample_name}/Output_hmmcopy/${sample_name}.of_orig.50kb.wig.Normalization.txt"
         """
         set -euo pipefail
 
@@ -95,7 +95,7 @@ process CALCULATE_SEQFF {
         path "${sample_name}.seqff.txt", emit: seqff_txt
 
     script:
-        def seqff_model = "/data/refs/models/seqff_model.pkl"
+        def seqff_model = "${params.ref_dir}/models/seqff_model.pkl"
         """
         set -euo pipefail
 

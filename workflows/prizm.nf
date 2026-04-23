@@ -1,34 +1,38 @@
 /*
  * =========================================================
- *  PRIZM Workflow
- *  HMMcopy 10mb count → PRIZM (orig / fetus / mom)
+ *  PRIZM Workflow (trio)
+ *
+ *  Input:
+ *    norm_10mb : channel of (sample, group, norm.txt) tuples
+ *                emitted by HMMCOPY_WORKFLOW for every group.
+ *                PRIZM ingests this 10mb normalisation TXT
+ *                directly as its "count_file_10mb".
+ *    gender_txt: path channel — <sample>.gender.txt from
+ *                GENDER_DECISION, used by PRIZM adapter to
+ *                pick male/female reference CSVs.
  * =========================================================
  */
 
-include { RUN_PRIZM }  from '../modules/prizm'
+include { RUN_PRIZM } from '../modules/prizm'
 
 workflow PRIZM_WORKFLOW {
     take:
-        sample_name    // string
-        ch_count_10mb  // channel: 10mb count file
-        ch_ff_result   // channel: fetal_fraction.txt
-        ch_config      // channel: pipeline_config.json
-        labcode        // string
-        analysisdir    // string
+        norm_10mb       // channel: tuple(sample, group, norm.txt)
+        gender_txt      // path channel: <sample>.gender.txt
+        ch_config       // path channel: pipeline_config.json
+        labcode         // string
+        analysisdir     // string
 
     main:
-        ch_groups = Channel.of('orig', 'fetus', 'mom')
-
         RUN_PRIZM(
-            sample_name,
-            ch_groups,
-            ch_count_10mb,
-            ch_ff_result,
+            norm_10mb,
+            gender_txt,
             ch_config,
             labcode,
-            analysisdir
+            analysisdir,
         )
 
     emit:
+        // (sample, group, prizm.qc.txt)
         prizm_result = RUN_PRIZM.out.prizm_result
 }

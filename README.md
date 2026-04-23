@@ -156,26 +156,42 @@ Lab configurations are stored in `conf/labs/{labcode}/pipeline_config.json`:
 
 ### Reference Files
 
-Reference files are organized by labcode and algorithm:
+gx-nipt keeps two kinds of reference data, separated by size:
+
+**1. Lightweight lab config (tracked in the repo, copied per-run):**
 
 ```
 conf/labs/{labcode}/
-├── pipeline_config.json
-├── ezd/
-│   ├── orig/
-│   │   └── ezd_reference.json
-│   ├── fetus/
-│   │   └── ezd_reference.json
-│   └── mom/
-│       └── ezd_reference.json
-├── prizm/
-│   └── prizm_reference.json
-└── wcx/
-    ├── M/
-    │   └── reference.npz
-    └── F/
-        └── reference.npz
+└── pipeline_config.json   # thresholds, QC cutoffs, module switches
 ```
+
+`run_nipt.sh` seeds `${ROOT_DIR}/config/{labcode}/pipeline_config.json`
+from this file on first run.
+
+**2. Heavy reference data (NOT in the repo — provisioned on the host):**
+
+`params.ref_dir` (default `/data/reference`) is bind-mounted read-only
+into every container at the same path. Populate it with:
+
+```
+/data/reference/
+├── genomes/hg19/hg19.fa      (+ .fai .0123 .amb .ann .bwt.2bit.64 .pac)
+├── hmmcopy/hg19.{50kb,10mb}.{gc,map}.wig
+├── models/seqff_model.pkl
+└── labs/{labcode}/
+    ├── WC/{group}/{group}_200k.npz
+    ├── WCX/{group}/{M,F}_200k.npz
+    ├── EZD/{group}/…
+    ├── PRIZM/{group}/…
+    └── bed/…
+```
+
+Override the root with `--ref_dir /path/to/reference` on the Nextflow
+command line, or `--ref-dir …` / `NIPT_REF_DIR=…` when going through
+`bin/run_nipt.sh` or `gx-daemon`.
+
+See [docs/reference_generation.md](docs/reference_generation.md) for
+how to build the lab-specific bundles.
 
 ---
 

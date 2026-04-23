@@ -29,7 +29,8 @@ class SCADetector:
         
         # 설정 파일 경로 구성
         if data_dir and labcode:
-            self.config_base_dir = os.path.join(data_dir, 'refs', labcode, 'EZD')
+            # gx-nipt reference layout: <ref_dir>/labs/<labcode>/EZD/
+            self.config_base_dir = os.path.join(data_dir, 'labs', labcode, 'EZD')
         else:
             self.config_base_dir = None
     
@@ -52,7 +53,7 @@ class SCADetector:
             }
             return config_files.get(config_type)
         
-        # DATA_DIR/refs/<labcode>/EZD/<config_type>/sca_config.json
+        # <ref_dir>/labs/<labcode>/EZD/<config_type>/sca_config.json
         config_dir = os.path.join(self.config_base_dir, config_type)
         config_file = os.path.join(config_dir, 'sca_config.json')
         
@@ -67,7 +68,8 @@ class SCADetector:
             data_dir (str): DATA_DIR 경로
             labcode (str): 실험실 코드
         """
-        base_dir = os.path.join(data_dir, 'refs', labcode, 'EZD')
+        # gx-nipt reference layout: <ref_dir>/labs/<labcode>/EZD/
+        base_dir = os.path.join(data_dir, 'labs', labcode, 'EZD')
         
         # 설정 데이터들
         configs = {

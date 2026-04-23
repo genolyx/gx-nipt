@@ -532,14 +532,6 @@ if __name__ == "__main__":
     logger.info("=== 옵션 1: 배지 스타일 (추천) ===")
     result1 = generate_final_results_section(test_data)
     logger.info("HTML 생성 완료")
-    
-    logger.info("\n=== 옵션 2: 간단한 버전 ===")
-    result2 = generate_final_results_section_simple(test_data)
-    logger.info("HTML 생성 완료")
-    
-    logger.info("\n=== 옵션 3: 테이블 형태 ===")
-    result3 = generate_final_results_section_table(test_data)
-    logger.info("HTML 생성 완료")
 
 
 def generate_trisomy_results_section(data):

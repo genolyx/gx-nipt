@@ -267,10 +267,17 @@ def process_microdeletion_result(sample_name, tool_name, input_file, tag, target
 
     return True
 
-def run_microdeletion_decision_pipeline(sample_name, labcode, config, analysis_dir, output_dir, bed_dir):
+def run_microdeletion_decision_pipeline(
+    sample_name, labcode, config, analysis_dir, output_dir, bed_dir,
+    config_file=None,
+):
     """
     Run microdeletion decision for all methods (WC, WCX) and types (orig, fetus, mom)
     across all MD targets defined in the config.
+
+    Args:
+        config_file: Optional explicit path to pipeline_config.json. If not
+                     provided, falls back to the ken-nipt legacy location.
     """
 
     methods = ["WC", "WCX"]
@@ -289,7 +296,9 @@ def run_microdeletion_decision_pipeline(sample_name, labcode, config, analysis_d
         "mom": f"{analysis_dir}/{sample_name}/Output_WCX/mom/{sample_name}.wcx.mom_aberrations.bed",
     }
 
-    config_file = f"/Work/NIPT/config/{labcode}/pipeline_config.json"
+    if config_file is None:
+        # Legacy ken-nipt fallback
+        config_file = f"/Work/NIPT/config/{labcode}/pipeline_config.json"
 
     for md_key in md_targets:
         bed_file = f"{bed_dir}/common/{config[md_key]['bed']}"
@@ -456,21 +465,141 @@ def copy_md_output_files(sample_id, analysis_dir, output_dir):
    
     return True
 
-if __name__ == "__main__":
-    # Example usage: python script.py WC wc.txt DB.bed
+# =========================================================
+#  Adapter CLI: Nextflow-compatible entry point
+#
+#  Used by modules/microdeletion.nf. Orchestrates
+#  run_microdeletion_decision_pipeline() across all WC/WCX
+#  results and concatenates the per-(method,group,md_key) TSVs
+#  into a single <sample>.md_result.tsv for downstream reporting.
+# =========================================================
+def _legacy_positional_main():
+    """Legacy ken-nipt positional CLI kept for backwards compatibility."""
     if len(sys.argv) != 10:
-        logger.error("Usage: python process_md_result_v1.2.py <sample_name> <tool_name> <input_file> <tag> <target_file> <config_file> <md_key> <output_dir> <threshold>")
+        logger.error(
+            "Usage: python process_md_result.py <sample_name> <tool_name> "
+            "<input_file> <tag> <target_file> <config_file> <md_key> "
+            "<output_dir> <threshold>"
+        )
         sys.exit(1)
-        
+
     sample_name = sys.argv[1]
-    tool_name = sys.argv[2]
-    input_file = sys.argv[3]
-    tag = sys.argv[4]
+    tool_name   = sys.argv[2]
+    input_file  = sys.argv[3]
+    tag         = sys.argv[4]
     target_file = sys.argv[5]
     config_file = sys.argv[6]
-    md_select = sys.argv[7]
-    output_dir = sys.argv[8]
-    threshold = sys.argv[9]
+    md_select   = sys.argv[7]
+    output_dir  = sys.argv[8]
+    threshold   = sys.argv[9]
 
-    process_microdeletion_result(sample_name, tool_name, input_file, tag, target_file, config_file, md_select, output_dir, threshold)
+    process_microdeletion_result(
+        sample_name, tool_name, input_file, tag, target_file,
+        config_file, md_select, output_dir, threshold,
+    )
 
+
+def _nf_main():
+    import argparse
+    import glob
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Microdeletion adapter CLI (Nextflow). Runs per-(method,group,"
+            "MD_Target) decisions and emits a single summary TSV."
+        )
+    )
+    parser.add_argument("--sample",       required=True)
+    parser.add_argument("--labcode",      required=True)
+    parser.add_argument("--config",       required=True, help="pipeline_config.json")
+    parser.add_argument("--analysis-dir", required=True,
+                        help="Root analysis dir where Output_WC / Output_WCX live")
+    parser.add_argument("--bed-dir",      required=True,
+                        help="Directory containing MD target BED files "
+                             "(expects a 'common/' subdir)")
+    parser.add_argument("--output",       required=True,
+                        help="Path to write unified md_result.tsv")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    if not os.path.exists(args.config):
+        logger.error(f"Config file not found: {args.config}")
+        sys.exit(2)
+    with open(args.config) as fh:
+        cfg = json.load(fh)
+
+    # The per-md/method/group TSVs are written under
+    # <analysis_dir>/<sample>/Output_WC(X)/<group>/*.tsv by
+    # process_microdeletion_result().
+    run_microdeletion_decision_pipeline(
+        sample_name=args.sample,
+        labcode=args.labcode,
+        config=cfg,
+        analysis_dir=args.analysis_dir,
+        output_dir=args.analysis_dir,
+        bed_dir=args.bed_dir,
+        config_file=args.config,
+    )
+
+    # Aggregate all md*.tsv files that the per-call routine produced
+    # into a single summary TSV (Nextflow's declared single output).
+    summary_rows = []
+    sample_out_root = os.path.join(args.analysis_dir, args.sample)
+    patterns = [
+        os.path.join(sample_out_root, "Output_WC",  "*", f"{args.sample}_WC_*_md*.tsv"),
+        os.path.join(sample_out_root, "Output_WCX", "*", f"{args.sample}_WCX_*_md*.tsv"),
+    ]
+    for pat in patterns:
+        for fp in sorted(glob.glob(pat)):
+            try:
+                sub = pd.read_csv(fp, sep="\t")
+            except Exception as e:
+                logger.warning(f"Skipping unreadable {fp}: {e}")
+                continue
+            if sub.empty:
+                continue
+            # Tag each row with its provenance (method, group, md_key)
+            basename = os.path.basename(fp).replace(".tsv", "")
+            parts = basename.split("_")
+            # <sample>_<method>_<tag>_<md_key>
+            if len(parts) >= 4:
+                method = parts[-3]
+                tag    = parts[-2]
+                mdkey  = parts[-1]
+            else:
+                method, tag, mdkey = "NA", "NA", "NA"
+            sub.insert(0, "md_key", mdkey)
+            sub.insert(0, "group",  tag)
+            sub.insert(0, "method", method)
+            sub.insert(0, "sample", args.sample)
+            summary_rows.append(sub)
+
+    if summary_rows:
+        out_df = pd.concat(summary_rows, ignore_index=True)
+    else:
+        out_df = pd.DataFrame(
+            columns=["sample", "method", "group", "md_key",
+                     "chr", "start", "end", "effect", "zscore", "length"]
+        )
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)) or ".", exist_ok=True)
+    out_df.to_csv(args.output, sep="\t", index=False)
+    logger.info(
+        f"[MD adapter] wrote {len(out_df)} rows to {args.output} "
+        f"from {len(summary_rows)} per-MD files."
+    )
+
+
+if __name__ == "__main__":
+    argv = sys.argv[1:]
+    _nf_flags = ("--sample", "--labcode", "--analysis-dir", "--bed-dir", "--output")
+    if any(flag in argv for flag in _nf_flags):
+        _nf_main()
+        sys.exit(0)
+    # Legacy positional fallback (kept for backwards compatibility)
+    _legacy_positional_main()
+    sys.exit(0)

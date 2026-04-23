@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from os.path import join
 
 import matplotlib
@@ -7,7 +8,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from sca_detector import SCADetector
+
+# Allow running this file directly via `python3 ezd_runner.py` inside
+# the gx-nipt container where sibling modules live in the same directory.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sca_detector import SCADetector  # noqa: E402
 
 matplotlib.use("Agg")
 
@@ -472,12 +477,13 @@ def run_ezd_group(
     output_dir = join(analysis_dir, sample_name, "Output_EZD", group)
     os.makedirs(output_dir, exist_ok=True)
 
+    # gx-nipt reference layout: <ref_dir>/labs/<labcode>/EZD/<group>/
     threshold_path = join(
-        data_dir, "refs", labcode, "EZD", group, f"{group}_thresholds_new.tsv"
+        data_dir, "labs", labcode, "EZD", group, f"{group}_thresholds_new.tsv"
     )
 
     # For plotting
-    chr_table_dir = join(data_dir, "refs", labcode, "EZD", f"{group}")
+    chr_table_dir = join(data_dir, "labs", labcode, "EZD", f"{group}")
 
     logger.info(f"Starting EZD pipeline for {sample_name} - {group}")
 
@@ -1470,3 +1476,109 @@ def plot_ezd_interactive(ezd_df, out_path):
         height=600,
     )
     fig.write_html(out_path)
+
+
+# =========================================================
+#  Adapter CLI: Nextflow-compatible entry point
+#
+#  Used by modules/ezd.nf. The adapter keeps the legacy
+#  `run_ezd_group()` API untouched but exposes flag-based
+#  arguments and flattens outputs into --outdir so that
+#  Nextflow's `publishDir` / output globs work naturally.
+# =========================================================
+def _main():
+    import argparse
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "EZD adapter CLI (Nextflow). Runs EZD analysis for a single "
+            "(sample, group) and writes results flat into --outdir."
+        )
+    )
+    parser.add_argument("--sample", required=True, help="Sample name")
+    parser.add_argument(
+        "--group", required=True, choices=["orig", "fetus", "mom"]
+    )
+    parser.add_argument(
+        "--norm-file",
+        required=True,
+        help="HMMcopy 50kb normalization TXT (e.g. 50kb.wig.Normalization.txt)",
+    )
+    parser.add_argument(
+        "--ref-dir",
+        required=True,
+        help=(
+            "Top-level reference directory. EZD files are expected at "
+            "<ref_dir>/labs/<labcode>/EZD/<group>/..."
+        ),
+    )
+    parser.add_argument("--labcode", required=True)
+    parser.add_argument(
+        "--outdir", required=True, help="Directory to write EZD outputs into"
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="pipeline_config.json (optional; used for plot DPI etc.)",
+    )
+    parser.add_argument(
+        "--ff-file",
+        default=None,
+        help="fetal_fraction result file (reserved; currently unused by EZD)",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    cfg = {}
+    if args.config and os.path.exists(args.config):
+        try:
+            with open(args.config) as fh:
+                cfg = json.load(fh)
+        except Exception as e:
+            logger.warning(f"Failed to parse config {args.config}: {e}")
+
+    outdir = Path(args.outdir).resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # run_ezd_group() writes into <analysis_dir>/<sample>/Output_EZD/<group>/.
+    # We sandbox inside a temp dir and then move every produced file up
+    # into --outdir so Nextflow sees a flat output layout.
+    with tempfile.TemporaryDirectory(prefix="ezd_", dir=str(outdir.parent)) as tmpdir:
+        run_ezd_group(
+            sample_name=args.sample,
+            group=args.group,
+            wig_path=args.norm_file,
+            labcode=args.labcode,
+            analysis_dir=tmpdir,
+            data_dir=args.ref_dir,
+            config=cfg,
+        )
+
+        produced = Path(tmpdir) / args.sample / "Output_EZD" / args.group
+        if not produced.exists():
+            logger.error(
+                f"EZD runner produced no output directory: {produced}"
+            )
+            sys.exit(1)
+
+        for f in produced.iterdir():
+            dst = outdir / f.name
+            if dst.exists():
+                dst.unlink()
+            shutil.move(str(f), str(dst))
+
+    logger.info(
+        f"[EZD adapter] {args.sample}/{args.group} -> {outdir} done."
+    )
+
+
+if __name__ == "__main__":
+    _main()

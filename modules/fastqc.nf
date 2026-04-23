@@ -26,7 +26,10 @@ process FASTQC {
         """
         set -euo pipefail
 
-        fastqc -o . -t 2 ${r1} ${r2}
+        # javax.imageio uses java.io.tmpdir; redirect to writable workdir.
+        export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=\${NXF_TASK_WORKDIR}"
+
+        fastqc -d . -o . -t 2 ${r1} ${r2}
 
         echo "[FASTQC] Complete for ${sample_name}"
         """

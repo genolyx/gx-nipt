@@ -74,7 +74,10 @@ workflow FF_GENDER_WORKFLOW {
         // ── gx-FF: LightGBM + DNN ensemble ───────────────────────────────────
         // Only runs when a trained model file is provided.
         // Falls back gracefully to seqFF-only if model is absent.
-        ch_gxff_tsv = Channel.empty()
+
+        // Wrap seqFF output as a keyed tuple for join/ensemble.
+        ch_seqff_keyed = CALCULATE_SEQFF.out.seqff_txt
+            .map { f -> tuple(sample_name, f) }
 
         if ( gxff_model.name != 'NO_FILE' ) {
             GXFF_PREDICT(
@@ -82,31 +85,30 @@ workflow FF_GENDER_WORKFLOW {
                 ch_bincount,
                 gxff_model
             )
-            ch_gxff_tsv = GXFF_PREDICT.out.gxff_tsv
+            // Join seqFF and gx-FF on sample_id key
+            ch_ensemble_input = ch_seqff_keyed
+                .join( GXFF_PREDICT.out.gxff_tsv )
+        } else {
+            // gx-FF disabled: pass NO_FILE as placeholder;
+            // GXFF_ENSEMBLE falls back to seqFF-only mode automatically.
+            ch_ensemble_input = ch_seqff_keyed
+                .map { sid, seqff -> tuple(sid, seqff, file('NO_FILE')) }
         }
 
         // ── Ensemble: combine seqFF + gx-FF ──────────────────────────────────
-        // Join seqFF and gx-FF outputs on sample_id.
-        // If gx-FF was skipped, the join produces an empty channel and
-        // GXFF_ENSEMBLE falls back to seqFF-only mode.
-        ch_seqff_tsv = CALCULATE_SEQFF.out.seqff_txt
-
-        ch_ensemble_input = ch_seqff_tsv
-            .join( ch_gxff_tsv.ifEmpty { tuple( sample_name, file('NO_FILE') ) }, remainder: true )
-            .map { sid, seqff, gxff ->
-                def gxff_file = (gxff == null || gxff.name == 'NO_FILE') ? file('NO_FILE') : gxff
-                tuple( sid, seqff, gxff_file )
-            }
-
+        // GXFF_ENSEMBLE handles NO_FILE gxff_tsv → seqFF-only fallback.
         GXFF_ENSEMBLE( ch_ensemble_input )
 
         // ── Final gender decision ─────────────────────────────────────────────
-        // Passes FF_FINAL from the ensemble to the gender decision step.
+        // GXFF_ENSEMBLE emits tuple(sample_id, path); GENDER_DECISION takes
+        // a plain path, so strip the key before passing.
+        ch_ff_tsv_path = GXFF_ENSEMBLE.out.ff_tsv.map { _sid, f -> f }
+
         GENDER_DECISION(
             sample_name,
             CALCULATE_YFF.out.yff_txt,
             CALCULATE_YFF2.out.yff2_txt,
-            GXFF_ENSEMBLE.out.ff_tsv,    // replaces raw seqFF_txt
+            ch_ff_tsv_path,
             CALCULATE_FRAGMENT_FF.out.frag_ff_txt,
             ch_config,
             analysisdir

@@ -1,61 +1,66 @@
 /*
  * =========================================================
- *  HMMcopy Workflow
- *  BAM → readCounter (50kb + 10mb) → HMMcopy.R normalization
+ *  HMMcopy Workflow (trio version)
+ *
+ *  Inputs:
+ *    - bam_trio : tuple (sample, orig_bam, orig_bai,
+ *                               fetus_bam, fetus_bai,
+ *                               mom_bam, mom_bai)
+ *                 produced by SAMTOOLS_SPLIT_FETUS_MOM.
+ *
+ *  Flow (per group x resolution):
+ *    BAM → readCounter → HMMcopy.R normalisation
+ *
+ *  Emits per-resolution channels keyed on (sample, group):
+ *    norm_50kb : [sample, group, norm.txt]  - used by EZD
+ *    norm_10mb : [sample, group, norm.txt]  - used by PRIZM
+ *
+ *  Note: PRIZM ingests the 10mb normalisation TXT directly;
+ *  no separate wig→count conversion is needed (kept in sync
+ *  with prizm_runner.run_prizm_analysis()).
  * =========================================================
  */
 
-include { READCOUNTER_50KB }  from '../modules/hmmcopy'
-include { READCOUNTER_10MB }  from '../modules/hmmcopy'
-include { HMMCOPY_R_50KB }    from '../modules/hmmcopy'
-include { HMMCOPY_R_10MB }    from '../modules/hmmcopy'
-include { COUNT_10MB }        from '../modules/hmmcopy'
+// Nextflow DSL2 forbids calling the same process twice in one
+// workflow context — alias the shared processes once per resolution.
+include { READCOUNTER as READCOUNTER_50K } from '../modules/hmmcopy'
+include { READCOUNTER as READCOUNTER_10M } from '../modules/hmmcopy'
+include { HMMCOPY_R   as HMMCOPY_R_50K   } from '../modules/hmmcopy'
+include { HMMCOPY_R   as HMMCOPY_R_10M   } from '../modules/hmmcopy'
 
 workflow HMMCOPY_WORKFLOW {
     take:
-        sample_name   // string
-        ch_bam        // channel: proper_paired.bam
-        labcode       // string
-        analysisdir   // string
+        bam_trio     // channel: tuple(sample, o_bam, o_bai, f_bam, f_bai, m_bam, m_bai)
+        labcode      // string (kept for symmetry; unused here)
+        analysisdir  // string
 
     main:
-        // readCounter at 50kb resolution (for EZD)
-        READCOUNTER_50KB(
-            sample_name,
-            ch_bam,
-            analysisdir
-        )
+        // Flatten the trio tuple into one (sample, group, bam, bai)
+        // channel entry per group so Nextflow parallelises across
+        // orig / fetus / mom naturally.
+        ch_bam_by_group = bam_trio.flatMap { t ->
+            def sample = t[0]
+            [
+                tuple(sample, 'orig',  t[1], t[2]),
+                tuple(sample, 'fetus', t[3], t[4]),
+                tuple(sample, 'mom',   t[5], t[6]),
+            ]
+        }
 
-        // readCounter at 10mb resolution (for PRIZM)
-        READCOUNTER_10MB(
-            sample_name,
-            ch_bam,
-            analysisdir
-        )
+        // ── readCounter at 50kb (for EZD) ─────────────────────
+        READCOUNTER_50K(ch_bam_by_group, '50kb', analysisdir)
 
-        // HMMcopy normalization at 50kb
-        HMMCOPY_R_50KB(
-            sample_name,
-            READCOUNTER_50KB.out.wig,
-            analysisdir
-        )
+        // ── readCounter at 10mb (for PRIZM) ───────────────────
+        READCOUNTER_10M(ch_bam_by_group, '10mb', analysisdir)
 
-        // HMMcopy normalization at 10mb
-        HMMCOPY_R_10MB(
-            sample_name,
-            READCOUNTER_10MB.out.wig,
-            analysisdir
-        )
+        // ── HMMcopy.R normalisation @ 50kb ────────────────────
+        HMMCOPY_R_50K(READCOUNTER_50K.out.wig, '50kb', analysisdir)
 
-        // Count matrix for PRIZM (10mb bins)
-        COUNT_10MB(
-            sample_name,
-            READCOUNTER_10MB.out.wig,
-            analysisdir
-        )
+        // ── HMMcopy.R normalisation @ 10mb ────────────────────
+        HMMCOPY_R_10M(READCOUNTER_10M.out.wig, '10mb', analysisdir)
 
     emit:
-        norm_50kb  = HMMCOPY_R_50KB.out.norm_txt
-        norm_10mb  = HMMCOPY_R_10MB.out.norm_txt
-        count_10mb = COUNT_10MB.out.count_txt
+        // Each channel element: (sample, group, path)
+        norm_50kb = HMMCOPY_R_50K.out.norm
+        norm_10mb = HMMCOPY_R_10M.out.norm
 }

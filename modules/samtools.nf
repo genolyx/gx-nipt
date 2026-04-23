@@ -103,3 +103,71 @@ process SAMTOOLS_PROPER_PAIRED {
         echo "[SAMTOOLS] Proper-paired filter complete: ${sample_name}.proper_paired.bam"
         """
 }
+
+/*
+ * TLEN-based split: proper_paired.bam → of_orig / of_fetus / of_mom
+ *
+ *   of_orig    : proper_paired.bam을 그대로 재사용 (alias)
+ *   of_fetus   : abs(tlen) <  160   (short cfDNA – 태아 유래 우세)
+ *   of_mom     : abs(tlen) >  184   (long cfDNA  – 모체 유래 우세)
+ *
+ * ken-nipt의 awk -f {fetus,mom}.awk 로직과 동등. samtools 1.13+의
+ * expression filter (-e)로 구현하여 awk 의존을 제거.
+ */
+process SAMTOOLS_SPLIT_FETUS_MOM {
+    tag "${sample_name}"
+    label 'process_medium'
+    label 'nipt_docker'
+
+    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
+               pattern: "${sample_name}.of_*.bam*"
+
+    input:
+        val  sample_name
+        path bam        // proper_paired.bam
+        path bai        // proper_paired.bam.bai
+        val  analysisdir
+
+    output:
+        tuple val(sample_name),
+              path("${sample_name}.of_orig.bam"),   path("${sample_name}.of_orig.bam.bai"),
+              path("${sample_name}.of_fetus.bam"),  path("${sample_name}.of_fetus.bam.bai"),
+              path("${sample_name}.of_mom.bam"),    path("${sample_name}.of_mom.bam.bai"),
+              emit: trio
+
+    script:
+        def threads   = task.cpus
+        def fetus_max = 160       // same threshold as ken-nipt/bin/scripts/fetus.awk
+        def mom_min   = 184       // same threshold as ken-nipt/bin/scripts/mom.awk
+        """
+        set -euo pipefail
+
+        # 0) of_orig: proper_paired를 그대로 rename
+        cp ${bam}                       ${sample_name}.of_orig.bam
+        cp ${bai}                       ${sample_name}.of_orig.bam.bai
+
+        # 1) of_fetus: |TLEN| < ${fetus_max}
+        samtools view \\
+            -@ ${threads} \\
+            -b -h \\
+            -e 'abs(tlen) < ${fetus_max}' \\
+            ${bam} \\
+            -o ${sample_name}.of_fetus.bam
+        samtools index -@ ${threads} ${sample_name}.of_fetus.bam
+
+        # 2) of_mom: |TLEN| > ${mom_min}
+        samtools view \\
+            -@ ${threads} \\
+            -b -h \\
+            -e 'abs(tlen) > ${mom_min}' \\
+            ${bam} \\
+            -o ${sample_name}.of_mom.bam
+        samtools index -@ ${threads} ${sample_name}.of_mom.bam
+
+        # Sanity counts (non-fatal; useful for trace log)
+        for g in orig fetus mom; do
+            n=\$(samtools view -c -@ ${threads} ${sample_name}.of_\${g}.bam)
+            echo "[SPLIT] ${sample_name}.of_\${g}.bam reads=\${n}"
+        done
+        """
+}
