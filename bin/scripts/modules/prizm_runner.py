@@ -2693,14 +2693,16 @@ def run_prizm_analysis(
 #  reference files from a flat ref-dir based on the gender parsed
 #  from the FF/gender file and then delegates to run_prizm_analysis().
 # =========================================================
-def _parse_gender_from_file(path: str) -> str:
+def _parse_gender_from_file(path: str, default: str = "female") -> str:
     """Return 'male' or 'female' prefix from a gender.txt / fetal_fraction.txt file.
 
     Expected formats:
       - gender.txt  (preferred): contains a line `final_gender\t<MALE|FEMALE>`
       - fetal_fraction.txt      : no gender — raises ValueError
 
-    Also accepts lowercase/mixed case. Returns 'male' or 'female'.
+    Also accepts lowercase/mixed case and karyotype notation (XY/XX).
+    When final_gender is UNKNOWN (low FF sample), falls back to *default* ('female').
+    Returns 'male' or 'female'.
     """
     if not path or not os.path.exists(path):
         raise ValueError(f"Gender file not found: {path}")
@@ -2719,6 +2721,12 @@ def _parse_gender_from_file(path: str) -> str:
                         return "male"
                     if val in ("FEMALE", "F", "XX"):
                         return "female"
+                    if val in ("UNKNOWN", "NA", "N/A", ""):
+                        logger.warning(
+                            f"final_gender is '{val}' in {path} (low FF sample?). "
+                            f"Defaulting to '{default}' for PRIZM reference selection."
+                        )
+                        return default
     raise ValueError(
         f"Could not parse final_gender from {path}. "
         "Expected a line like 'final_gender\\tMALE' or 'final_gender\\tFEMALE' (or XY/XX)."

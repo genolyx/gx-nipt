@@ -147,21 +147,18 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
         cp ${bai}                       ${sample_name}.of_orig.bam.bai
 
         # 1) of_fetus: |TLEN| < ${fetus_max}
-        samtools view \\
-            -@ ${threads} \\
-            -b -h \\
-            -e 'abs(tlen) < ${fetus_max}' \\
-            ${bam} \\
-            -o ${sample_name}.of_fetus.bam
+        # awk col-9 (TLEN) squared < SIZE^2 — same as ken-nipt/bin/scripts/fetus.awk
+        # samtools 1.13 does not support abs() in -e expressions; use awk instead.
+        samtools view -h -@ ${threads} ${bam} | \\
+            awk 'BEGIN{S2=${fetus_max}*${fetus_max}} /^@/{print;next} \$9*\$9<S2{print}' | \\
+            samtools view -b -@ ${threads} -o ${sample_name}.of_fetus.bam
         samtools index -@ ${threads} ${sample_name}.of_fetus.bam
 
         # 2) of_mom: |TLEN| > ${mom_min}
-        samtools view \\
-            -@ ${threads} \\
-            -b -h \\
-            -e 'abs(tlen) > ${mom_min}' \\
-            ${bam} \\
-            -o ${sample_name}.of_mom.bam
+        # awk col-9 (TLEN) squared > SIZE^2 — same as ken-nipt/bin/scripts/mom.awk
+        samtools view -h -@ ${threads} ${bam} | \\
+            awk 'BEGIN{S2=${mom_min}*${mom_min}} /^@/{print;next} \$9*\$9>S2{print}' | \\
+            samtools view -b -@ ${threads} -o ${sample_name}.of_mom.bam
         samtools index -@ ${threads} ${sample_name}.of_mom.bam
 
         # Sanity counts (non-fatal; useful for trace log)

@@ -815,7 +815,7 @@ def read_chromosome_analysis_from_ezd_prizm_detailed(
         f"EZD file read successfully. Shape: {ezd_df.shape}, Columns: {list(ezd_df.columns)}"
     )
 
-    prizm_df = pd.read_csv(prizm_file_path, sep="\t", comment="#")
+    prizm_df = safe_read_csv(prizm_file_path, sep="\t", comment="#")
     if prizm_df is None:
         logger.warning(f"Failed to read PRIZM file: {prizm_file_path}")
         return {}

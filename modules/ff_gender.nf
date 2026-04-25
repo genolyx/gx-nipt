@@ -21,6 +21,7 @@ process CALCULATE_YFF {
     input:
         val  sample_name
         path bam
+        path bai
         path config_json
         val  labcode
         val  analysisdir
@@ -53,6 +54,7 @@ process CALCULATE_YFF2 {
 
     input:
         val  sample_name
+        path wig_norm
         path config_json
         val  labcode
         val  analysisdir
@@ -61,7 +63,6 @@ process CALCULATE_YFF2 {
         path "${sample_name}.yff2.txt", emit: yff2_txt
 
     script:
-        def wig_norm = "${analysisdir}/${sample_name}/Output_hmmcopy/${sample_name}.of_orig.50kb.wig.Normalization.txt"
         """
         set -euo pipefail
 
@@ -87,6 +88,7 @@ process CALCULATE_SEQFF {
     input:
         val  sample_name
         path bam
+        path bai
         path config_json
         val  labcode
         val  analysisdir
@@ -122,6 +124,7 @@ process CALCULATE_FRAGMENT_FF {
     input:
         val  sample_name
         path bam
+        path bai
         path config_json
         val  analysisdir
 

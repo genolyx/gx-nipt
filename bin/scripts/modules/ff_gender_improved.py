@@ -147,11 +147,14 @@ def calculate_yff1(sample_name: str, bam_path: str, config: dict, labcode: str) 
 
 
 def _yff1_failed(sample_name: str, reason: str) -> dict:
+    # Default to XX (Female) on failure — same as ken-nipt gender_detector.py
+    # gd_1_detection() which returns (0.0, "FEMALE", "XX") on any exception.
+    logger.warning(f"YFF1 failed for {sample_name}: {reason}. Defaulting gd_1_gender to XX.")
     return {
         "sample_name": sample_name,
         "YFF1": 0.0,
         "gd_1_value": 0.0,
-        "gd_1_gender": "UNKNOWN",
+        "gd_1_gender": "XX",
         "status": f"FAILED: {reason}",
     }
 
@@ -231,13 +234,16 @@ def calculate_yff2(sample_name: str, wig_norm_file: str, config: dict) -> dict:
 
 
 def _yff2_failed(sample_name: str, reason: str) -> dict:
+    # Default to XX (Female) on failure — same as ken-nipt gender_detector.py
+    # gd_2_detection() which returns (0.0, "FEMALE", "XX") on any exception.
+    logger.warning(f"YFF2 failed for {sample_name}: {reason}. Defaulting gd_2_gender to XX.")
     return {
         "sample_name": sample_name,
         "YFF2": 0.0,
         "UAR_X": 0.0,
         "UAR_Y": 0.0,
         "gd_2_value": 0.0,
-        "gd_2_gender": "UNKNOWN",
+        "gd_2_gender": "XX",
         "status": f"FAILED: {reason}",
     }
 

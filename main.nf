@@ -175,7 +175,11 @@ workflow {
     def analysisdir = params.analysisdir ?: "${root_dir}/analysis/${work_dir}/${sample_name}"
 
     // ── Channel creation ──────────────────────────────────
-    ch_config = Channel.fromPath("${root_dir}/config/${labcode}/pipeline_config.json", checkIfExists: true)
+    // Use Channel.value so the config is reused for every item in multi-element
+    // channels (norm_50kb/norm_10mb have 3 items: orig, fetus, mom) without being
+    // consumed — Channel.fromPath would create a queue channel that gets exhausted
+    // after the first process invocation.
+    ch_config = Channel.value(file("${root_dir}/config/${labcode}/pipeline_config.json", checkIfExists: true))
 
     // FASTQ or BAM input
     if (params.from_bam) {
@@ -221,6 +225,7 @@ workflow {
             analysisdir
         )
         ch_proper_bam = ALIGN_WORKFLOW.out.proper_bam
+        ch_proper_bai = ALIGN_WORKFLOW.out.proper_bai
         ch_bam_trio   = ALIGN_WORKFLOW.out.bam_trio
 
         // ── QC (parallel with alignment output) ───────────
@@ -238,7 +243,7 @@ workflow {
         def pp_bam_path = "${analysisdir}/${sample_name}.proper_paired.bam"
         def pp_bai_path = "${analysisdir}/${sample_name}.proper_paired.bam.bai"
         ch_proper_bam = Channel.fromPath(pp_bam_path, checkIfExists: true)
-        def ch_proper_bai = Channel.fromPath(pp_bai_path, checkIfExists: true)
+        ch_proper_bai = Channel.fromPath(pp_bai_path, checkIfExists: true)
 
         SAMTOOLS_SPLIT_FETUS_MOM(
             sample_name,
@@ -266,9 +271,17 @@ workflow {
     // gx-FF bincount input is unused when gxff_model is absent — pass NO_FILE.
     ch_bincount_sentinel = Channel.value(file('NO_FILE'))
 
+    // YFF2 needs the HMMcopy 50kb wig normalization file for the "orig" group.
+    // Filtering here creates an explicit data dependency on HMMCOPY_WORKFLOW.
+    ch_wig_norm_orig = ch_norm_50kb
+        .filter { _sample, group, _path -> group == "orig" }
+        .map    { _sample, _group, path -> path }
+
     FF_GENDER_WORKFLOW(
         sample_name,
         ch_proper_bam,
+        ch_proper_bai,
+        ch_wig_norm_orig,
         ch_bincount_sentinel,
         ch_config,
         labcode,
@@ -284,6 +297,11 @@ workflow {
             log.info "[FF] Sample ${sid}: ensemble FF result -> ${tsv}"
         }
 
+    // gender_txt is a queue channel (1 item). PRIZM and WCX need it for each of
+    // the 3 groups (orig/fetus/mom). Convert to a value channel so it is reused
+    // instead of being consumed after the first process invocation.
+    ch_gender_val = ch_gender_txt.first()
+
     // ── EZD (depends on HMMcopy 50kb per-group) ───────────
     EZD_WORKFLOW(
         ch_norm_50kb,
@@ -296,7 +314,7 @@ workflow {
     // ── PRIZM (depends on HMMcopy 10mb per-group + gender) ─
     PRIZM_WORKFLOW(
         ch_norm_10mb,
-        ch_gender_txt,
+        ch_gender_val,
         ch_config,
         labcode,
         analysisdir
@@ -306,7 +324,7 @@ workflow {
     // ── Wisecondor + gx-cnv (trio BAM + gender) ───────────
     WC_WORKFLOW(
         ch_bam_trio,
-        ch_gender_txt,
+        ch_gender_val,
         ch_config,
         labcode,
         analysisdir,

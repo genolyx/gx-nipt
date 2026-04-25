@@ -29,7 +29,9 @@ include { GXFF_ENSEMBLE }        from '../modules/gxff'
 workflow FF_GENDER_WORKFLOW {
     take:
         sample_name   // val: sample identifier
-        ch_bam        // tuple: (sample_id, bam, bai)
+        ch_bam        // path: proper_paired.bam
+        ch_bai        // path: proper_paired.bam.bai
+        ch_wig_norm   // path: 50kb wig normalization file from HMMcopy (or NO_FILE)
         ch_bincount   // path: 50kb bin count file from HMMcopy (or NO_FILE)
         ch_config     // path: pipeline_config.json
         labcode       // val: lab identifier
@@ -41,14 +43,18 @@ workflow FF_GENDER_WORKFLOW {
         CALCULATE_YFF(
             sample_name,
             ch_bam,
+            ch_bai,
             ch_config,
             labcode,
             analysisdir
         )
 
         // ── YFF2: Adjusted YFF using wig normalisation ────────────────────────
+        // ch_wig_norm is the HMMcopy 50kb normalization file (staged as path so
+        // Nextflow enforces the data-dependency on HMMCOPY_WORKFLOW).
         CALCULATE_YFF2(
             sample_name,
+            ch_wig_norm,
             ch_config,
             labcode,
             analysisdir
@@ -58,6 +64,7 @@ workflow FF_GENDER_WORKFLOW {
         CALCULATE_SEQFF(
             sample_name,
             ch_bam,
+            ch_bai,
             ch_config,
             labcode,
             analysisdir
@@ -67,6 +74,7 @@ workflow FF_GENDER_WORKFLOW {
         CALCULATE_FRAGMENT_FF(
             sample_name,
             ch_bam,
+            ch_bai,
             ch_config,
             analysisdir
         )

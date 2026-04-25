@@ -145,5 +145,6 @@ workflow ALIGN_WORKFLOW {
 
     emit:
         proper_bam = ch_proper_bam
+        proper_bai = ch_proper_bai
         bam_trio   = SAMTOOLS_SPLIT_FETUS_MOM.out.trio
 }

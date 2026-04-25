@@ -47,6 +47,17 @@ process RUN_WC {
         # python2 getpass.getuser() fails when uid has no /etc/passwd entry
         # (Docker --user 1002:1000).  Set LOGNAME so it returns early.
         export LOGNAME="\${LOGNAME:-nipt}"
+        # wisecondor.py uses matplotlib for report plots; redirect font cache.
+        export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
+
+        # Skip WC gracefully when the BAM has no mapped reads (e.g. empty
+        # fetus/mom BAM from TLEN-split of a very-low-FF sample).
+        READ_COUNT=\$(samtools view -c ${bam})
+        if [ "\${READ_COUNT}" -eq 0 ]; then
+            echo "[WC] ${group} BAM is empty (0 reads) — writing empty report." >&2
+            printf "WC\\t${group}\\tSKIPPED (empty BAM)\\n" > ${sample_name}.wc.${group}.report.txt
+            exit 0
+        fi
 
         # ── Step 1: BAM → NPZ (old Python-2 Wisecondor) ──────────────────────
         python2 /opt/wisecondor/wisecondor.py convert \\
@@ -129,6 +140,14 @@ process RUN_WCX {
                 orig)  REF_NPZ="${params.ref_dir}/labs/${labcode}/WCX/orig_F_200k_proper_paired.npz" ;;
                 fetus) REF_NPZ="${params.ref_dir}/labs/${labcode}/WCX/fetus_F_200k_of.npz" ;;
             esac
+        fi
+
+        # Skip WCX gracefully when the BAM has no mapped reads.
+        READ_COUNT=\$(samtools view -c ${bam})
+        if [ "\${READ_COUNT}" -eq 0 ]; then
+            echo "[WCX] ${group} BAM is empty (0 reads) — writing empty aberrations file." >&2
+            touch ${sample_name}.wcx.${group}_aberrations.bed
+            exit 0
         fi
 
         # Convert BAM to npz
