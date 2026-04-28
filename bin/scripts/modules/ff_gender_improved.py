@@ -553,7 +553,7 @@ def gender_decision(
 def write_ff_txt(ff_result: dict, output_path: str) -> None:
     """Write fetal fraction result in ken-nipt compatible format."""
     with open(output_path, "w") as f:
-        f.write("value\n")
+        f.write("\tvalue\n")  # leading tab → 2-column header; pandas reads col-0 as row label
         for key in ("Fragment_FF", "YFF_2", "SeqFF", "M-SeqFF", "Final_FF", "FF_Source"):
             val = ff_result.get(key, "")
             f.write(f"{key}\t{val}\n")
@@ -564,10 +564,10 @@ def write_ff_txt(ff_result: dict, output_path: str) -> None:
 def write_gender_txt(gender_result: dict, output_path: str) -> None:
     """Write gender result in ken-nipt compatible format."""
     with open(output_path, "w") as f:
-        f.write("value\n")
+        f.write("\tvalue\tgender\n")  # leading tab → 3-column header (index, value, gender)
         f.write(f"{gender_result['gd_1']}\n")
         f.write(f"{gender_result['gd_2']}\n")
-        f.write(f"final_gender\t{gender_result['final_gender']}\n")
+        f.write(f"final_gender\t{gender_result['final_gender']}\t{gender_result['final_gender']}\n")
 
 
 def write_yff_txt(result: dict, output_path: str, keys: list) -> None:

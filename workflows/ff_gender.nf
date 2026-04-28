@@ -108,15 +108,18 @@ workflow FF_GENDER_WORKFLOW {
         GXFF_ENSEMBLE( ch_ensemble_input )
 
         // ── Final gender decision ─────────────────────────────────────────────
-        // GXFF_ENSEMBLE emits tuple(sample_id, path); GENDER_DECISION takes
-        // a plain path, so strip the key before passing.
+        // GXFF_ENSEMBLE emits tuple(sample_id, path); strip the key for emit only.
         ch_ff_tsv_path = GXFF_ENSEMBLE.out.ff_tsv.map { _sid, f -> f }
 
+        // GENDER_DECISION expects the raw seqff.txt (key-value format written by
+        // ff_gender_improved.py --mode seqff), not the ensemble TSV. The ensemble
+        // TSV has a different column-header format that load_txt_as_dict cannot
+        // resolve to a "SeqFF" key, causing seqFF to fall back to 0.0.
         GENDER_DECISION(
             sample_name,
             CALCULATE_YFF.out.yff_txt,
             CALCULATE_YFF2.out.yff2_txt,
-            ch_ff_tsv_path,
+            CALCULATE_SEQFF.out.seqff_txt,
             CALCULATE_FRAGMENT_FF.out.frag_ff_txt,
             ch_config,
             analysisdir

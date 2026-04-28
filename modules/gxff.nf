@@ -104,23 +104,28 @@ logger = logging.getLogger(__name__)
 sample_id = "${sample_id}"
 
 # ── Read seqFF ────────────────────────────────────────────────────────────────
+# seqff.txt is written by ff_gender_improved.py write_yff_txt() as a
+# key-value file (tab-separated, first line is "value" header):
+#   value
+#   SeqFF<TAB>15.3968
+#   status<TAB>OK
 seqff_val = None
 try:
     with open("${seqff_tsv}") as f:
-        reader = csv.DictReader(f, delimiter="\\t")
-        for row in reader:
-            # seqFF output: SAMPLE_ID, FF_SEQFF (or FF column)
-            for col in ("FF_SEQFF", "FF", "ff", "seqFF"):
-                if col in row:
-                    try:
-                        seqff_val = float(row[col])
-                    except (ValueError, TypeError):
-                        pass
-                    break
-            break
+        for line in f:
+            line = line.strip()
+            if not line or line == "value":
+                continue
+            parts = line.split("\\t")
+            if len(parts) >= 2 and parts[0] == "SeqFF":
+                try:
+                    seqff_val = float(parts[1])
+                except (ValueError, TypeError):
+                    pass
+                break
     logger.info("seqFF value: %s", seqff_val)
 except Exception as e:
-    logger.warning("Could not read seqFF TSV: %s", e)
+    logger.warning("Could not read seqFF txt: %s", e)
 
 # ── Read gx-FF ────────────────────────────────────────────────────────────────
 gxff_val = None

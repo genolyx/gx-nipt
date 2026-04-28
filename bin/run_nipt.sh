@@ -209,6 +209,24 @@ progress "START" "0" "order=${ORDER_ID} work=${WORK_DIR} labcode=${LABCODE}"
 # -----------------------------------------------------------
 if [[ "$FORCE" == "false" && -f "$COMPLETED_FILE" ]]; then
     echo "[run_nipt] Already completed: $COMPLETED_FILE (use --force to re-run)"
+
+    # If the daemon-facing JSON is missing (e.g. pipeline was run directly
+    # via nextflow without run_nipt.sh), recover it from the published result.
+    DAEMON_JSON="${HOST_OUTPUT_DIR}/${ORDER_ID}.json"
+    if [[ ! -f "$DAEMON_JSON" ]]; then
+        echo "[run_nipt] WARNING: daemon JSON missing despite completed marker — attempting recovery"
+        RECOVER_SRC="${HOST_ANALYSIS_DIR}/${SAMPLE_NAME}/Output_Result/${SAMPLE_NAME}.result.json"
+        if [[ ! -f "$RECOVER_SRC" ]]; then
+            RECOVER_SRC="${HOST_OUTPUT_DIR}/Output_Result/${SAMPLE_NAME}.result.json"
+        fi
+        if [[ -f "$RECOVER_SRC" ]]; then
+            cp -f "$RECOVER_SRC" "$DAEMON_JSON"
+            echo "[run_nipt] Recovered: $DAEMON_JSON"
+        else
+            echo "[run_nipt] ERROR: cannot recover daemon JSON — source not found: $RECOVER_SRC" >&2
+        fi
+    fi
+
     progress "COMPLETED" "100" "already-completed marker present"
     exit 0
 fi

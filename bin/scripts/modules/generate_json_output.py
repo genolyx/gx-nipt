@@ -168,7 +168,10 @@ def read_fetal_fraction_data(ff_path, gender_path):
                 ff_type = str(
                     row.iloc[0]
                 )  # 첫 번째 컬럼 (Unnamed: 0 또는 첫 번째 컬럼)
-                ff_value = float(row.iloc[1])  # 두 번째 컬럼 (value)
+                try:
+                    ff_value = float(row.iloc[1])  # 두 번째 컬럼 (value)
+                except (ValueError, TypeError):
+                    continue  # FF_Source 등 비수치 행 건너뜀
 
                 if ff_type == "YFF_2":
                     yff = ff_value
