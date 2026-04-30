@@ -9,6 +9,9 @@ process SAMTOOLS_SORT_INDEX {
     label 'process_medium'
     label 'nipt_docker'
 
+    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
+               pattern: "${sample_name}.${suffix}.bam*"
+
     input:
         val  sample_name
         path bam
@@ -44,6 +47,9 @@ process SAMTOOLS_FILTER_UNIQUE {
     label 'process_medium'
     label 'nipt_docker'
 
+    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
+               pattern: "${sample_name}.unique.bam*"
+
     input:
         val  sample_name
         path bam
@@ -76,6 +82,9 @@ process SAMTOOLS_PROPER_PAIRED {
     tag "${sample_name}"
     label 'process_medium'
     label 'nipt_docker'
+
+    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
+               pattern: "${sample_name}.proper_paired.bam*"
 
     input:
         val  sample_name
@@ -139,24 +148,23 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
         def threads   = task.cpus
         def fetus_max = 160       // same threshold as ken-nipt/bin/scripts/fetus.awk
         def mom_min   = 184       // same threshold as ken-nipt/bin/scripts/mom.awk
+        def of_bed    = "${params.ref_dir}/bed/common/Uniform_2017_allY.bed"
         """
         set -euo pipefail
 
-        # 0) of_orig: proper_paired를 그대로 rename
-        cp ${bam}                       ${sample_name}.of_orig.bam
-        cp ${bai}                       ${sample_name}.of_orig.bam.bai
+        # 0) of_orig: proper_paired filtered by Uniform_2017_allY.bed (matches ken-nipt)
+        #    ken-nipt: samtools view -b -L Uniform_2017_allY.bed proper_paired.bam > of_orig.bam
+        samtools view -b -@ ${threads} -L ${of_bed} ${bam} -o ${sample_name}.of_orig.bam
+        samtools index -@ ${threads} ${sample_name}.of_orig.bam
 
-        # 1) of_fetus: |TLEN| < ${fetus_max}
-        # awk col-9 (TLEN) squared < SIZE^2 — same as ken-nipt/bin/scripts/fetus.awk
-        # samtools 1.13 does not support abs() in -e expressions; use awk instead.
-        samtools view -h -@ ${threads} ${bam} | \\
+        # 1) of_fetus: of_orig filtered by |TLEN| < ${fetus_max}  (same as ken-nipt fetus.awk)
+        samtools view -h -@ ${threads} ${sample_name}.of_orig.bam | \\
             awk 'BEGIN{S2=${fetus_max}*${fetus_max}} /^@/{print;next} \$9*\$9<S2{print}' | \\
             samtools view -b -@ ${threads} -o ${sample_name}.of_fetus.bam
         samtools index -@ ${threads} ${sample_name}.of_fetus.bam
 
-        # 2) of_mom: |TLEN| > ${mom_min}
-        # awk col-9 (TLEN) squared > SIZE^2 — same as ken-nipt/bin/scripts/mom.awk
-        samtools view -h -@ ${threads} ${bam} | \\
+        # 2) of_mom: of_orig filtered by |TLEN| > ${mom_min}  (same as ken-nipt mom.awk)
+        samtools view -h -@ ${threads} ${sample_name}.of_orig.bam | \\
             awk 'BEGIN{S2=${mom_min}*${mom_min}} /^@/{print;next} \$9*\$9>S2{print}' | \\
             samtools view -b -@ ${threads} -o ${sample_name}.of_mom.bam
         samtools index -@ ${threads} ${sample_name}.of_mom.bam

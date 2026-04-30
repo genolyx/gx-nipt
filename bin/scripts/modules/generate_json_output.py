@@ -153,60 +153,74 @@ def read_fetal_fraction_data(ff_path, gender_path):
             'ff_ratio': float  # YFF_2 / SeqFF 비율
         }
     """
-    yff = 0.0
+    yff_raw = 0.0   # numeric YFF_2 value
     seqff = 0.0
     gender = "Unknown"
     ff_ratio = 0.0
 
     try:
         # 1. Fetal fraction 파일 읽기
+        # fetal_fraction.txt format (tab-separated, first column unnamed):
+        #   Fragment_FF / YFF_2 / SeqFF / M-SeqFF / Final_FF / FF_Source
+        # SeqFF  = GC-corrected coverage-based FF  ← use this for seqFF report
+        # M-SeqFF= maternal-corrected fragment FF  ← NOT the seqFF to report
         try:
             ff_df = pd.read_csv(ff_path, sep="\t")
 
-            # YFF_2와 SeqFF 값 추출
             for idx, row in ff_df.iterrows():
-                ff_type = str(
-                    row.iloc[0]
-                )  # 첫 번째 컬럼 (Unnamed: 0 또는 첫 번째 컬럼)
+                ff_type = str(row.iloc[0])
                 try:
-                    ff_value = float(row.iloc[1])  # 두 번째 컬럼 (value)
+                    ff_value = float(row.iloc[1])
                 except (ValueError, TypeError):
-                    continue  # FF_Source 등 비수치 행 건너뜀
+                    continue  # skip non-numeric rows (e.g. FF_Source)
 
                 if ff_type == "YFF_2":
-                    yff = ff_value
+                    yff_raw = ff_value
                 elif ff_type == "M-SeqFF":
                     seqff = ff_value
 
         except Exception as e:
             logger.error(f"Error reading fetal fraction file {ff_path}: {e}")
-            yff = 0.0
+            yff_raw = 0.0
             seqff = 0.0
 
-        logger.info(f"yff : {yff}, seqff : {seqff}")
+        logger.info(f"yff_raw : {yff_raw}, seqff : {seqff}")
+
         # 2. Gender 파일 읽기
+        # gender.txt format (3 columns: name / value / gender):
+        #   gd_1 / gd_2 / final_gender rows
         try:
             gender_df = pd.read_csv(gender_path, sep="\t")
 
-            # gd_2의 gender 값 추출
             for idx, row in gender_df.iterrows():
-                gd_type = str(row.iloc[0])  # 첫 번째 컬럼
+                gd_type = str(row.iloc[0])
                 logger.info(f"gd_type : {gd_type}")
-                if (
-                    gd_type == "gd_2" and len(row) >= 3
-                ):  # gd_2 행이고 gender 컬럼이 있는 경우
-                    gender = "Female" if str(row.iloc[2]) == "XX" else "Male"
+                if gd_type == "gd_2" and len(row) >= 3:
+                    gender = "Female" if str(row.iloc[2]).upper() in ("XX", "FEMALE", "F") else "Male"
                     break
+                # fallback: use final_gender row if gd_2 not found
+                if gd_type == "final_gender" and len(row) >= 2:
+                    val = str(row.iloc[1]).upper()
+                    if val in ("XX", "FEMALE", "F"):
+                        gender = "Female"
+                    elif val in ("XY", "MALE", "M"):
+                        gender = "Male"
 
         except Exception as e:
             logger.error(f"Error reading gender file {gender_path}: {e}")
             gender = "Unknown"
 
         logger.info(f"gender : {gender}")
-        # 3. FF ratio 계산 (YFF_2 / SeqFF)
+
+        # 3. YFF 표시값 결정 (Female 샘플은 YFF 측정 불가 → N/A)
+        yff: object = round(yff_raw, 4) if gender != "Female" else "N/A"
+
+        # 4. FF ratio 계산 (YFF_2 / SeqFF, Female은 N/A)
         try:
-            if seqff != 0:
-                ff_ratio = yff / seqff
+            if gender == "Female":
+                ff_ratio = "N/A"
+            elif seqff != 0 and isinstance(yff, float):
+                ff_ratio = round(yff_raw / seqff, 2)
             else:
                 ff_ratio = 0.0
         except Exception as e:
@@ -218,7 +232,7 @@ def read_fetal_fraction_data(ff_path, gender_path):
             "gender": gender,
             "yff": yff,
             "seqff": seqff,
-            "ff_ratio": round(ff_ratio, 2),
+            "ff_ratio": ff_ratio,
         }
 
     except Exception as e:

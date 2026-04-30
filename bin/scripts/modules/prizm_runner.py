@@ -2713,9 +2713,10 @@ def _parse_gender_from_file(path: str, default: str = "female") -> str:
             if not line:
                 continue
             # final_gender<TAB>MALE|FEMALE  (or karyotype XY|XX written by ff_gender_improved.py)
+            # File may have 2 or 3 columns: "final_gender\tXX" or "final_gender\tXX\tXX"
             if line.lower().startswith("final_gender"):
-                parts = re.split(r"[\t\s]+", line, maxsplit=1)
-                if len(parts) == 2:
+                parts = re.split(r"[\t]+", line)
+                if len(parts) >= 2:
                     val = parts[1].strip().upper()
                     if val in ("MALE", "M", "XY"):
                         return "male"

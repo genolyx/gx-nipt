@@ -50,9 +50,15 @@ def _run(cmd: str) -> None:
     subprocess.check_call(cmd, shell=True, executable="/bin/bash")
 
 
-def _seqtk_sample(src: Path, dst: Path, n: int, seed: int = 100) -> None:
-    """Sample n reads with seqtk (reproducible) and gzip the result."""
-    _run(f"seqtk sample -s {seed} {src} {n} | gzip -c > {dst}")
+def _seqtk_sample(src: Path, dst: Path, n: int, total: int, seed: int = 100) -> None:
+    """Sample n reads with seqtk (reproducible) and gzip the result.
+
+    Uses fraction mode (n/total) to match ken-nipt's seqtk sample -s100 behaviour.
+    seqtk's fraction and count modes use slightly different rounding, so using
+    the same fraction ensures both pipelines select identical reads.
+    """
+    fraction = n / total
+    _run(f"seqtk sample -s {seed} {src} {fraction} | gzip -c > {dst}")
 
 
 def _passthrough(src: Path, dst: Path) -> None:
@@ -95,10 +101,12 @@ def main() -> int:
         print("[downsample] ERROR: empty FASTQ(s)", file=sys.stderr)
         return 1
 
-    if max_fq_size > 0 and total > max_fq_size and ds_size > 0:
-        # Downsample both mates with the same seed so pairs stay aligned.
-        _seqtk_sample(args.r1, out_r1, ds_size)
-        _seqtk_sample(args.r2, out_r2, ds_size)
+    # Match ken-nipt: check per-mate R1 count (not combined total)
+    if max_fq_size > 0 and r1_reads > max_fq_size and ds_size > 0:
+        # Use fraction mode (ds_size / r1_reads) to match ken-nipt's seqtk call.
+        # Both mates use the same fraction so read pairs stay aligned.
+        _seqtk_sample(args.r1, out_r1, ds_size, r1_reads)
+        _seqtk_sample(args.r2, out_r2, ds_size, r1_reads)
         status = f"0. FastQ size ({total}) has been downsampled to {ds_size * 2}\n"
     else:
         _passthrough(args.r1, out_r1)

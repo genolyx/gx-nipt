@@ -97,18 +97,48 @@ process CALCULATE_SEQFF {
         path "${sample_name}.seqff.txt", emit: seqff_txt
 
     script:
-        def seqff_model = "${params.ref_dir}/models/seqff_model.pkl"
+        def seqff_r_dir = "/opt/gx-nipt/bin/scripts/seqFF_R"
         """
         set -euo pipefail
+        export TMPDIR="\${NXF_TASK_WORKDIR}"
 
-        python3 /opt/gx-nipt/bin/scripts/modules/ff_gender_improved.py \\
-            --mode seqff \\
-            --bam ${bam} \\
-            --config ${config_json} \\
-            --labcode ${labcode} \\
-            --sample ${sample_name} \\
-            --seqff-model ${seqff_model} \\
-            --output ${sample_name}.seqff.txt
+        # Run the official R-based seqFF script (outputs fraction, not %)
+        # Must run from the seqFF_R directory (reference data files are read relative to CWD)
+        _raw="\${NXF_TASK_WORKDIR}/${sample_name}.seqff_raw.txt"
+        cd ${seqff_r_dir} && Rscript --vanilla seqff.r -f \${NXF_TASK_WORKDIR}/${bam} -o "\${_raw}"
+        cd \${NXF_TASK_WORKDIR}
+
+        # Parse SeqFF fraction from R output and convert to %
+        # R output format: "SeqFF",0.0527...
+        python3 - <<'PYEOF'
+import csv, sys, os
+
+raw = "${sample_name}.seqff_raw.txt"
+out = "${sample_name}.seqff.txt"
+
+seqff_pct = None
+try:
+    with open(raw) as f:
+        reader = csv.reader(f)
+        next(reader)  # skip header row
+        for row in reader:
+            if len(row) >= 2 and row[0].strip('"') == "SeqFF":
+                seqff_pct = round(float(row[1]) * 100, 4)
+                break
+except Exception as e:
+    print(f"[SeqFF] Could not parse R output: {e}", file=sys.stderr)
+
+if seqff_pct is None:
+    print("[SeqFF] WARNING: SeqFF not found in R output, defaulting to 0.0", file=sys.stderr)
+    seqff_pct = 0.0
+
+with open(out, "w") as f:
+    f.write("value\\n")
+    f.write(f"SeqFF\\t{seqff_pct}\\n")
+    f.write("status\\tOK\\n")
+
+print(f"[SeqFF] SeqFF = {seqff_pct}%")
+PYEOF
 
         echo "[SeqFF] Complete for ${sample_name}"
         """

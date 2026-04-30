@@ -166,8 +166,11 @@ def _yff1_failed(sample_name: str, reason: str) -> dict:
 def calculate_yff2(sample_name: str, wig_norm_file: str, config: dict) -> dict:
     """
     Calculate YFF2 from HMMcopy 50kb normalization output.
-    Uses UAR_X (chrX usage ratio) and UAR_Y (chrY usage ratio) to determine
-    gender (gd_2) and estimate fetal fraction for male fetuses.
+
+    Matches ken-nipt nipt_pipeline.py::calculate_yff2() exactly:
+      - Reads 'cor.gc' column (index 8) from the 11-column wig norm file
+      - gd_2 = Σ(cor.gc at 14 specific Y positions) / Σ(cor.gc in unique_Y region) × 100
+      - YFF2 (male only) = 2 × UAR_Y × 100, where UAR_Y = median(chrY cor.gc) / median(autosome cor.gc)
     """
     ff_config = config.get("FF_Gender_Config", {})
     gd_2_threshold = ff_config.get("gd_2_threshold", 0.4)
@@ -177,53 +180,63 @@ def calculate_yff2(sample_name: str, wig_norm_file: str, config: dict) -> dict:
         return _yff2_failed(sample_name, "wig norm file not found")
 
     try:
-        x_values, y_values, autosome_values = [], [], []
+        import pandas as pd
 
-        with open(wig_norm_file) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) < 3:
-                    continue
-                chrom = parts[0]
-                try:
-                    norm_val = float(parts[2])
-                except (ValueError, IndexError):
-                    continue
+        df = pd.read_csv(
+            wig_norm_file, sep="\t", header=0,
+            names=["chr","start","end","reads","gc","map","valid","ideal","cor.gc","cor.map","copy"],
+        )
+        df["chr"]   = df["chr"].str.strip()
+        df["start"] = pd.to_numeric(df["start"], errors="coerce").fillna(0).astype(int)
+        df["cor.gc"]= pd.to_numeric(df["cor.gc"], errors="coerce")
 
-                if chrom == "chrX":
-                    x_values.append(norm_val)
-                elif chrom == "chrY":
-                    y_values.append(norm_val)
-                elif chrom not in ("chrX", "chrY"):
-                    autosome_values.append(norm_val)
+        # Keep only positive cor.gc values (valid bins)
+        df = df[df["cor.gc"] > 0]
 
-        if not autosome_values:
-            return _yff2_failed(sample_name, "No autosome data in wig norm file")
+        # Exclude centromere regions (same as ken-nipt)
+        df_chrX = df[(df["chr"] == "chrX") &
+                     ~((df["start"] >= 58100001) & (df["start"] <= 63000000))]
+        df_chrY = df[(df["chr"] == "chrY") &
+                     ~((df["start"] >= 11600001) & (df["start"] <= 14000000))]
+        df_auto = df[~df["chr"].isin(["chrX", "chrY"])]
 
-        autosome_median = float(np.median(autosome_values))
-        if autosome_median <= 0:
-            return _yff2_failed(sample_name, "Autosome median is zero")
+        # ── gd_2: specific 14 Y-region windows ───────────────────────────────
+        # Same as ken-nipt: unique_Y = Y bins in (2650001, 59050000)
+        unique_Y = df_chrY[(df_chrY["start"] > 2650001) & (df_chrY["start"] < 59050000)]
 
-        uar_x = float(np.median(x_values)) / autosome_median if x_values else 0.0
-        uar_y = float(np.median(y_values)) / autosome_median if y_values else 0.0
+        SPECIFIC_POSITIONS = [
+            7650001, 7750001, 7800001, 8400001, 8450001, 8500001, 8550001,
+            8600001, 15500001, 18900001, 22250001, 22450001, 22900001, 23600001,
+        ]
+        unique_Y_specific = unique_Y[unique_Y["start"].isin(SPECIFIC_POSITIONS)]
 
-        # gd_2: ratio of Y to X usage ratio
-        gd_2_value = uar_y / uar_x if uar_x > 0 else 0.0
-        gd_2_gender = "XY" if gd_2_value >= gd_2_threshold else "XX"
+        sum_unique_Y         = unique_Y["cor.gc"].sum()
+        sum_unique_Y_specific = unique_Y_specific["cor.gc"].sum()
 
-        # YFF2: for male fetus, FF = 2 * UAR_Y * 100
-        yff2 = 2.0 * uar_y * 100.0 if gd_2_gender == "XY" else 0.0
+        gd_2_value = (sum_unique_Y_specific / sum_unique_Y * 100.0
+                      if sum_unique_Y > 0 else 0.0)
+        gd_2_gender = "XY" if gd_2_value > gd_2_threshold else "XX"
 
-        logger.info(f"YFF2 - UAR_X: {uar_x:.4f}, UAR_Y: {uar_y:.4f}, gd_2: {gd_2_value:.4f}, Gender: {gd_2_gender}")
+        logger.info(f"YFF2 - gd_2: {gd_2_value:.6f} → {gd_2_gender} (threshold: {gd_2_threshold})")
+
+        # ── YFF2: UAR-based FF for male fetus ────────────────────────────────
+        # UAR_X/Y = median(chr cor.gc) / median(autosome cor.gc)
+        auto_median = float(np.median(df_auto["cor.gc"])) if len(df_auto) > 0 else 0.0
+        uar_x = (float(np.median(df_chrX["cor.gc"])) / auto_median
+                 if len(df_chrX) > 0 and auto_median > 0 else 0.0)
+        uar_y = (float(np.median(df_chrY["cor.gc"])) / auto_median
+                 if len(df_chrY) > 0 and auto_median > 0 else 0.0)
+
+        # YFF2 only meaningful for male fetus
+        yff2 = round(2.0 * uar_y * 100.0, 4) if gd_2_gender == "XY" else 0.0
+
+        logger.info(f"YFF2 - UAR_X: {uar_x:.4f}, UAR_Y: {uar_y:.4f}, YFF2: {yff2:.4f}%")
 
         return {
             "sample_name": sample_name,
-            "YFF2": round(yff2, 4),
-            "UAR_X": round(uar_x, 6),
-            "UAR_Y": round(uar_y, 6),
+            "YFF2":       yff2,
+            "UAR_X":      round(uar_x, 6),
+            "UAR_Y":      round(uar_y, 6),
             "gd_2_value": round(gd_2_value, 6),
             "gd_2_gender": gd_2_gender,
             "status": "OK",
@@ -485,7 +498,8 @@ def gender_decision(
     # ── FF value selection ────────────────────────────────
     yff2_val   = yff2.get("YFF2", 0.0)
     seqff_val  = seqff.get("SeqFF", 0.0)
-    m_seqff    = frag_ff.get("M-SeqFF", 0.0)
+    # M-SeqFF = SeqFF (R-based) + 4.0 bias correction (matches ken-nipt formula)
+    m_seqff    = round(seqff_val + 4.0, 4) if seqff_val > 0.0 else frag_ff.get("M-SeqFF", 0.0)
     frag_ff_val= frag_ff.get("Fragment_FF", 0.0)
     yff1_val   = yff1.get("YFF1", 0.0)
 

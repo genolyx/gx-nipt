@@ -9,6 +9,9 @@ process PICARD_MARKDUP {
     label 'process_medium'
     label 'nipt_docker'
 
+    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
+               pattern: "${sample_name}.dedup.*"
+
     input:
         val  sample_name
         path bam
@@ -32,7 +35,7 @@ process PICARD_MARKDUP {
             INPUT=${bam} \\
             OUTPUT=${sample_name}.dedup.bam \\
             METRICS_FILE=${sample_name}.dedup.metrics \\
-            REMOVE_DUPLICATES=false \\
+            REMOVE_DUPLICATES=true \\
             ASSUME_SORTED=true \\
             VALIDATION_STRINGENCY=LENIENT \\
             2> ${sample_name}.picard.log
