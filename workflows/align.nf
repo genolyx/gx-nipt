@@ -77,16 +77,10 @@ workflow ALIGN_WORKFLOW {
                 labcode,
                 analysisdir
             )
-            ch_raw_bam = BWA_ALIGN.out.bam
-
-            // ── Step 3: Sort BAM ───────────────────────────
-            SAMTOOLS_SORT_INDEX(
-                sample_name,
-                ch_raw_bam,
-                'sorted',
-                analysisdir
-            )
-            ch_sorted_bam = SAMTOOLS_SORT_INDEX.out.bam
+            // BWA_ALIGN now outputs a coordinate-sorted BAM directly
+            // (bwa-mem2 | samtools sort pipe, matching ken-nipt's approach).
+            // SAMTOOLS_SORT_INDEX is no longer needed here.
+            ch_sorted_bam = BWA_ALIGN.out.bam
 
             // ── Step 4: Picard MarkDuplicates ──────────────
             PICARD_MARKDUP(

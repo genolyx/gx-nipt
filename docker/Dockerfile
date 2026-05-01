@@ -201,7 +201,7 @@ RUN git clone https://github.com/VUmcCGP/wisecondor.git /opt/wisecondor && \
 # All scripts are placed under /opt/gx-nipt/bin/scripts/ — the single path
 # that every Nextflow module imports.
 # ----------------------------
-ARG CACHE_BREAK=15
+ARG CACHE_BREAK=18
 
 COPY bin/scripts /opt/gx-nipt/bin/scripts
 # Old Wisecondor (Python 2) – used by RUN_WC process for WC-family analysis

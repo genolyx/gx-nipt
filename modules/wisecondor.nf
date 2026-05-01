@@ -159,11 +159,14 @@ process RUN_WCX {
             --binsize ${binsize}
 
         # Run WisecondorX predict with gender-aware reference
+        # --alpha and --seed match ken-nipt's invocation for reproducibility
         WisecondorX predict \\
             ${sample_name}.wcx.${group}.npz \\
             \${REF_NPZ} \\
             ${sample_name}.wcx.${group} \\
             --zscore 6.0 \\
+            --alpha 0.01 \\
+            --seed 100 \\
             --bed
 
         echo "[WCX] ${group} complete for ${sample_name}"

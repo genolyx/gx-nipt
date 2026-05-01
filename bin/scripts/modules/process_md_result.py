@@ -532,6 +532,23 @@ def _nf_main():
     with open(args.config) as fh:
         cfg = json.load(fh)
 
+    # Remove stale per-MD TSV files from previous runs so they are not
+    # picked up by the aggregation step below (avoids carrying over false
+    # positives from a run where WCX was misconfigured).
+    sample_out_root = os.path.join(args.analysis_dir, args.sample)
+    stale_patterns = [
+        os.path.join(sample_out_root, "Output_WC",  "*", f"{args.sample}_WC_*_md*.tsv"),
+        os.path.join(sample_out_root, "Output_WCX", "*", f"{args.sample}_WCX_*_md*.tsv"),
+    ]
+    import glob as _glob
+    for pat in stale_patterns:
+        for fp in _glob.glob(pat):
+            try:
+                os.remove(fp)
+                logger.info(f"[MD] Removed stale TSV: {fp}")
+            except Exception as e:
+                logger.warning(f"[MD] Could not remove stale TSV {fp}: {e}")
+
     # The per-md/method/group TSVs are written under
     # <analysis_dir>/<sample>/Output_WC(X)/<group>/*.tsv by
     # process_microdeletion_result().

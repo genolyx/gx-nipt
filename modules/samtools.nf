@@ -138,11 +138,18 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
         val  analysisdir
 
     output:
+        // trio "orig" slot = proper_paired.bam, matching ken-nipt's WCX/HMMcopy input.
+        // of_orig.bam is still produced (published to analysisdir) and used as the
+        // base for fetus/mom TLEN-splitting, but NOT passed downstream in the trio.
         tuple val(sample_name),
-              path("${sample_name}.of_orig.bam"),   path("${sample_name}.of_orig.bam.bai"),
-              path("${sample_name}.of_fetus.bam"),  path("${sample_name}.of_fetus.bam.bai"),
-              path("${sample_name}.of_mom.bam"),    path("${sample_name}.of_mom.bam.bai"),
+              path("${sample_name}.proper_paired.bam"), path("${sample_name}.proper_paired.bam.bai"),
+              path("${sample_name}.of_fetus.bam"),      path("${sample_name}.of_fetus.bam.bai"),
+              path("${sample_name}.of_mom.bam"),        path("${sample_name}.of_mom.bam.bai"),
               emit: trio
+        // Expose of_orig.bam separately so callers that need it can use it
+        tuple val(sample_name),
+              path("${sample_name}.of_orig.bam"),       path("${sample_name}.of_orig.bam.bai"),
+              emit: of_orig
 
     script:
         def threads   = task.cpus
@@ -152,8 +159,8 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
         """
         set -euo pipefail
 
-        # 0) of_orig: proper_paired filtered by Uniform_2017_allY.bed (matches ken-nipt)
-        #    ken-nipt: samtools view -b -L Uniform_2017_allY.bed proper_paired.bam > of_orig.bam
+        # 0) of_orig: proper_paired filtered by Uniform_2017_allY.bed (ken-nipt of_orig)
+        #    Used as base for fetus/mom TLEN-splitting and published to analysisdir.
         samtools view -b -@ ${threads} -L ${of_bed} ${bam} -o ${sample_name}.of_orig.bam
         samtools index -@ ${threads} ${sample_name}.of_orig.bam
 
@@ -169,10 +176,16 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
             samtools view -b -@ ${threads} -o ${sample_name}.of_mom.bam
         samtools index -@ ${threads} ${sample_name}.of_mom.bam
 
-        # Sanity counts (non-fatal; useful for trace log)
+        # 3) Expose proper_paired.bam in this work dir (symlink to the staged input).
+        #    The trio "orig" slot uses proper_paired.bam for WCX/HMMcopy (matches ken-nipt).
+        ln -sf \$(realpath ${bam}) ${sample_name}.proper_paired.bam
+        ln -sf \$(realpath ${bai}) ${sample_name}.proper_paired.bam.bai
+
+        # Sanity counts
         for g in orig fetus mom; do
             n=\$(samtools view -c -@ ${threads} ${sample_name}.of_\${g}.bam)
             echo "[SPLIT] ${sample_name}.of_\${g}.bam reads=\${n}"
         done
+        echo "[SPLIT] proper_paired reads=\$(samtools view -c -@ ${threads} ${sample_name}.proper_paired.bam)"
         """
 }
