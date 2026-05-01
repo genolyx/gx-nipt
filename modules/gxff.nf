@@ -17,8 +17,7 @@
 process GXFF_PREDICT {
     tag "${sample_id}"
     label 'process_medium'
-
-    container 'genolyx/gx-ff:latest'
+    label 'nipt_docker'
 
     input:
     tuple val(sample_id), path(bam), path(bai)
@@ -30,6 +29,7 @@ process GXFF_PREDICT {
     path "${sample_id}.gxff.log",                        emit: log
 
     script:
+    // gxff predict --out is a directory; output TSV is always ff_predictions.tsv
     def bincount_arg = bincount.name != 'NO_FILE' ? "--bincount ${bincount}" : "--bam ${bam}"
     """
     set -euo pipefail
@@ -37,12 +37,14 @@ process GXFF_PREDICT {
     python -m gxff predict \\
         ${bincount_arg} \\
         --model ${model_pkl} \\
-        --sample-id ${sample_id} \\
-        --out ${sample_id}.gxff.tsv \\
+        --out gxff_out \\
+        --genome hg19 \\
         2>&1 | tee ${sample_id}.gxff.log
 
-    # Validate output
-    if [ ! -s "${sample_id}.gxff.tsv" ]; then
+    # Copy canonical output to sample-named file consumed by GXFF_ENSEMBLE
+    if [ -s "gxff_out/ff_predictions.tsv" ]; then
+        cp gxff_out/ff_predictions.tsv ${sample_id}.gxff.tsv
+    else
         echo "ERROR: gx-FF produced empty output for ${sample_id}" >&2
         exit 1
     fi
@@ -71,8 +73,7 @@ process GXFF_PREDICT {
 process GXFF_ENSEMBLE {
     tag "${sample_id}"
     label 'process_low'
-
-    container 'genolyx/gx-nipt:latest'
+    label 'nipt_docker'
 
     input:
     tuple val(sample_id), path(seqff_tsv), path(gxff_tsv)

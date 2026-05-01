@@ -22,8 +22,7 @@
 process GXCNV_CONVERT {
     tag "${sample_id}"
     label 'process_medium'
-
-    container 'genolyx/gx-cnv:latest'
+    label 'nipt_docker'
 
     input:
     tuple val(sample_id), path(bam), path(bai)
@@ -67,8 +66,7 @@ process GXCNV_CONVERT {
 process GXCNV_NEWREF {
     tag "gxcnv_newref"
     label 'process_high'
-
-    container 'genolyx/gx-cnv:latest'
+    label 'nipt_docker'
 
     input:
     path npz_files   // collection of normal sample NPZ files
@@ -109,11 +107,10 @@ process GXCNV_NEWREF {
 process GXCNV_PREDICT {
     tag "${sample_id}"
     label 'process_medium'
+    label 'nipt_docker'
 
-    container 'genolyx/gx-cnv:latest'
-
-    publishDir "${params.outdir}/${sample_id}/gxcnv", mode: 'copy', pattern: "*.tsv"
-    publishDir "${params.outdir}/${sample_id}/gxcnv", mode: 'copy', pattern: "*.txt"
+    publishDir "${analysisdir}/${sample_id}/gxcnv", mode: 'copy', pattern: "*.tsv", overwrite: true
+    publishDir "${analysisdir}/${sample_id}/gxcnv", mode: 'copy', pattern: "*.txt", overwrite: true
 
     input:
     tuple val(sample_id), path(sample_npz)
@@ -121,6 +118,7 @@ process GXCNV_PREDICT {
     val   thresh_z
     val   thresh_p
     val   fetal_fraction   // from FF ensemble step; "NA" if unavailable
+    val   analysisdir
 
     output:
     tuple val(sample_id), path("${sample_id}_bins.tsv"),     emit: bins_tsv
@@ -172,16 +170,16 @@ process GXCNV_PREDICT {
 process GXCNV_COMPARE {
     tag "${sample_id}"
     label 'process_low'
+    label 'nipt_docker'
 
-    container 'genolyx/gx-nipt:latest'
-
-    publishDir "${params.outdir}/${sample_id}/cnv_comparison", mode: 'copy'
+    publishDir "${analysisdir}/${sample_id}/gxcnv", mode: 'copy', overwrite: true
 
     input:
     tuple val(sample_id),
           path(gxcnv_calls),
           path(gxcnv_regions),
           path(wcx_aberrations)   // WisecondorX aberrations.bed or equivalent
+    val   analysisdir
 
     output:
     tuple val(sample_id), path("${sample_id}.cnv_comparison.tsv"), emit: comparison

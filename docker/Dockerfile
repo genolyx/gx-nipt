@@ -173,6 +173,29 @@ RUN if [ ! -f /usr/local/bin/wisecondorx ]; then ln -s /opt/conda/envs/nipt/bin/
     if [ ! -f /usr/local/bin/readCounter ]; then ln -s /opt/conda/envs/nipt/bin/readCounter /usr/local/bin/readCounter; fi
 
 # ----------------------------
+# gx-FF: Fetal Fraction ensemble (LightGBM + DNN)
+# gx-cnv: Hybrid dual-track CNV detection (WisecondorX-inspired Track A + BinDel-inspired Track B)
+#
+# torch is intentionally omitted here (several GB); add it when a trained
+# gx-FF model (.pkl) is available and needs to be used in production.
+# ----------------------------
+RUN /opt/conda/envs/nipt/bin/pip install \
+    lightgbm \
+    loess \
+    tqdm \
+    seaborn \
+    PyYAML \
+    joblib
+
+RUN /opt/conda/envs/nipt/bin/pip install \
+    git+https://github.com/genolyx/gx-FF && \
+    /opt/conda/envs/nipt/bin/python -c "import gxff; print('gx-FF installed OK')"
+
+RUN /opt/conda/envs/nipt/bin/pip install \
+    git+https://github.com/genolyx/gx-cnv && \
+    /opt/conda/envs/nipt/bin/gxcnv --version
+
+# ----------------------------
 # Nextflow (launcher container runs Nextflow itself; task containers are
 # spawned on the host daemon via the bind-mounted docker socket — a.k.a.
 # Docker-outside-of-Docker, same pattern as gx-exome).
@@ -201,7 +224,7 @@ RUN git clone https://github.com/VUmcCGP/wisecondor.git /opt/wisecondor && \
 # All scripts are placed under /opt/gx-nipt/bin/scripts/ — the single path
 # that every Nextflow module imports.
 # ----------------------------
-ARG CACHE_BREAK=18
+ARG CACHE_BREAK=19
 
 COPY bin/scripts /opt/gx-nipt/bin/scripts
 # Old Wisecondor (Python 2) – used by RUN_WC process for WC-family analysis

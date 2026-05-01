@@ -89,7 +89,8 @@ workflow WC_WORKFLOW {
                 gxcnv_reference,
                 gxcnv_thresh_z,
                 gxcnv_thresh_p,
-                Channel.value('NA')   // FF passed as placeholder (FF join TODO)
+                Channel.value('NA'),  // FF passed as placeholder (FF join TODO)
+                analysisdir
             )
             ch_gxcnv_calls = GXCNV_PREDICT.out.calls_tsv
 
@@ -106,7 +107,7 @@ workflow WC_WORKFLOW {
                         def aber_file = (aber == null) ? file('NO_FILE') : aber
                         tuple( sid, calls, regions, aber_file )
                     }
-                GXCNV_COMPARE( ch_compare_input )
+                GXCNV_COMPARE( ch_compare_input, analysisdir )
                 ch_gxcnv_comparison = GXCNV_COMPARE.out.comparison
             }
         }

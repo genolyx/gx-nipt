@@ -88,8 +88,12 @@ workflow FF_GENDER_WORKFLOW {
             .map { f -> tuple(sample_name, f) }
 
         if ( gxff_model.name != 'NO_FILE' ) {
+            // GXFF_PREDICT expects tuple(sample_id, bam, bai) as first input
+            ch_bam_keyed = ch_bam.combine(ch_bai)
+                .map { bam, bai -> tuple(sample_name, bam, bai) }
+
             GXFF_PREDICT(
-                ch_bam,
+                ch_bam_keyed,
                 ch_bincount,
                 gxff_model
             )

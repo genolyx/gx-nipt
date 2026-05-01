@@ -327,6 +327,76 @@ def read_md_detection_results(wc_file, wcx_file, md_type):
     return list(detected_diseases) if detected_diseases else []
 
 
+def read_gxff_ensemble(analysis_dir, sample_name):
+    """
+    Read gx-FF ensemble result from ff_ensemble.tsv (written by GXFF_ENSEMBLE).
+
+    Returns dict with keys ff_gxff, ff_final, ff_method, qc_flags, or None if
+    the file does not exist (gx-FF was disabled / model not provided).
+    """
+    tsv_path = f"{analysis_dir}/{sample_name}/Output_FF/{sample_name}.ff_ensemble.tsv"
+    if not os.path.isfile(tsv_path):
+        return None
+    try:
+        import csv
+        with open(tsv_path) as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for row in reader:
+                return {
+                    "ff_gxff":   row.get("FF_GXFF",   "N/A"),
+                    "ff_final":  row.get("FF_FINAL",  "N/A"),
+                    "ff_method": row.get("FF_METHOD", "N/A"),
+                    "qc_flags":  row.get("QC_FLAGS",  "N/A"),
+                }
+    except Exception as e:
+        logger.warning(f"[gxFF] Could not read ff_ensemble.tsv: {e}")
+    return None
+
+
+def read_gxcnv_comparison(analysis_dir, sample_name):
+    """
+    Read gx-cnv vs WCX concordance summary from cnv_comparison.tsv.
+
+    Returns a summary dict with n_high_risk, n_concordant, discordant_regions,
+    or None if the file does not exist (gx-cnv was disabled / no reference).
+    """
+    tsv_path = f"{analysis_dir}/{sample_name}/gxcnv/{sample_name}.cnv_comparison.tsv"
+    if not os.path.isfile(tsv_path):
+        return None
+    try:
+        n_high_risk = 0
+        n_concordant = 0
+        n_wcx_only = 0
+        n_gxcnv_only = 0
+        discordant = []
+        with open(tsv_path) as fh:
+            for line in fh:
+                if line.startswith("#") or not line.strip():
+                    # Parse summary from meta-header lines
+                    if line.startswith("## n_concordant="):
+                        n_concordant = int(line.split("=")[1].strip())
+                    elif line.startswith("## n_gxcnv_only="):
+                        n_gxcnv_only = int(line.split("=")[1].strip())
+                    elif line.startswith("## n_wcx_only="):
+                        n_wcx_only = int(line.split("=")[1].strip())
+                    continue
+                parts = line.strip().split("\t")
+                if len(parts) >= 5 and parts[2] == "HIGH_RISK":
+                    n_high_risk += 1
+                if len(parts) >= 5 and parts[4] == "DISCORDANT":
+                    discordant.append(parts[1])
+        return {
+            "n_high_risk":     n_high_risk,
+            "n_concordant":    n_concordant,
+            "n_gxcnv_only":   n_gxcnv_only,
+            "n_wcx_only":     n_wcx_only,
+            "discordant_regions": discordant,
+        }
+    except Exception as e:
+        logger.warning(f"[gxCNV] Could not read cnv_comparison.tsv: {e}")
+    return None
+
+
 def build_final_results_table(analysis_dir, sample_name):
     """Build final results table from actual data files"""
 
@@ -343,6 +413,12 @@ def build_final_results_table(analysis_dir, sample_name):
     ff_file = f"{analysis_dir}/{sample_name}/Output_FF/{sample_name}.fetal_fraction.txt"
     gender_file = f"{analysis_dir}/{sample_name}/Output_FF/{sample_name}.gender.txt"
     ff_gender_data = read_fetal_fraction_data(ff_file, gender_file)
+
+    # 2b. Read gx-FF ensemble result (optional — only present when model provided)
+    gxff_data = read_gxff_ensemble(analysis_dir, sample_name)
+
+    # 2c. Read gx-cnv vs WCX concordance (optional — only present when reference provided)
+    gxcnv_data = read_gxcnv_comparison(analysis_dir, sample_name)
 
     # 3. Read sample bias QC
     sample_bias_file = f"{analysis_dir}/{sample_name}/Output_PRIZM/orig/{sample_name}.of_orig.prizm.qc.txt"
@@ -406,8 +482,8 @@ def build_final_results_table(analysis_dir, sample_name):
         "fetal_fraction_seqff": ff_gender_data["seqff"],
         "ff_ratio": ff_gender_data["ff_ratio"],
         "sample_bias_qc": sample_bias,
-        #'final_trisomy_result': final_trisomy_results,
-        #'md_results': md_results if md_results else ["Low Risk"]
+        "gxff": gxff_data,      # None when gx-FF was disabled
+        "gxcnv": gxcnv_data,    # None when gx-cnv was disabled
     }
 
 
@@ -1357,16 +1433,34 @@ def build_nipt_json(
 
     # 250610 : trisomy_result, md_result should have "Disease" list. So, I changed the return.
     if final_results:
-        output[APPID]["final_results"] = {
+        _fr: dict = {
             "order_id": sample_name,
             "fetal_fraction_yff": f"{final_results['fetal_fraction_yff']}",
             "fetal_fraction_seqff": f"{final_results['fetal_fraction_seqff']}",
             "ff_ratio": str(final_results["ff_ratio"]),
-            #"sample_bias": final_results["sample_bias_qc"],
             "fetal_gender": final_results["fetal_gender"],
-            # "trisomy_result": "Low Risk" if final_results['final_trisomy_result'] == ["Low Risk"] else "High Risk",
-            # "md_result": "Low Risk" if final_results['md_results'] == ["Low Risk"] else "High Risk"
         }
+        # gx-FF comparison fields (present only when model was provided)
+        if final_results.get("gxff"):
+            gxff = final_results["gxff"]
+            _fr["fetal_fraction_gxff"]  = gxff.get("ff_gxff",   "N/A")
+            _fr["fetal_fraction_ff_final"] = gxff.get("ff_final", "N/A")
+            _fr["ff_method"]            = gxff.get("ff_method", "seqff_only")
+        else:
+            _fr["fetal_fraction_gxff"]     = "N/A"
+            _fr["fetal_fraction_ff_final"] = "N/A"
+            _fr["ff_method"]               = "seqff_only"
+        # gx-cnv comparison fields (present only when reference was provided)
+        if final_results.get("gxcnv"):
+            gxcnv = final_results["gxcnv"]
+            _fr["gxcnv_high_risk_regions"]  = gxcnv.get("n_high_risk",  0)
+            _fr["gxcnv_wcx_concordant"]     = gxcnv.get("n_concordant", "N/A")
+            _fr["gxcnv_discordant_regions"] = gxcnv.get("discordant_regions", [])
+        else:
+            _fr["gxcnv_high_risk_regions"]  = "N/A"
+            _fr["gxcnv_wcx_concordant"]     = "N/A"
+            _fr["gxcnv_discordant_regions"] = "N/A"
+        output[APPID]["final_results"] = _fr
 
     # 2. Read trisomy results
     trisomy_results = build_trisomy_results(
