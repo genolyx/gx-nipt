@@ -16,16 +16,17 @@ include { COPY_TO_OUTPUT }   from '../modules/report'
 
 workflow REPORT_WORKFLOW {
     take:
-        sample_name    // string
-        ch_ezd_result  // channel: tuple(sample, group, path)
-        ch_prizm_result// channel: tuple(sample, group, path)
-        ch_ff_result   // channel: path
-        ch_md_result   // channel: path
-        ch_qc_result   // channel: path
-        ch_config      // channel: pipeline_config.json
-        labcode        // string
-        analysisdir    // string
-        outdir         // string
+        sample_name      // string
+        ch_ezd_result    // channel: tuple(sample, group, path)
+        ch_prizm_result  // channel: tuple(sample, group, path)
+        ch_ff_result     // channel: path
+        ch_md_result     // channel: path
+        ch_qc_result     // channel: path
+        ch_config        // channel: pipeline_config.json
+        labcode          // string
+        analysisdir      // string
+        outdir           // string
+        ch_ff_ensemble   // channel: tuple(sample_id, path) — ensures GXFF_ENSEMBLE finishes before report
 
     main:
         // Normalise per-group tuple channels to plain path channels
@@ -33,11 +34,16 @@ workflow REPORT_WORKFLOW {
         ch_ezd_paths    = ch_ezd_result.map   { sid, grp, p -> p }
         ch_prizm_paths  = ch_prizm_result.map { sid, grp, p -> p }
 
+        // Strip sample_id key from ff_ensemble tuple; mix in so report waits
+        // for GXFF_ENSEMBLE to publish ff_ensemble.tsv before generating JSON.
+        ch_ff_ensemble_path = ch_ff_ensemble.map { _sid, p -> p }
+
         ch_all_results = ch_ezd_paths
             .mix(ch_prizm_paths)
             .mix(ch_ff_result)
             .mix(ch_md_result)
             .mix(ch_qc_result)
+            .mix(ch_ff_ensemble_path)
             .collect()
 
         GENERATE_JSON(

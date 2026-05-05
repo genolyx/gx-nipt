@@ -88,13 +88,16 @@ workflow FF_GENDER_WORKFLOW {
             .map { f -> tuple(sample_name, f) }
 
         if ( gxff_model.name != 'NO_FILE' ) {
-            // GXFF_PREDICT expects tuple(sample_id, bam, bai) as first input
+            // GXFF_PREDICT expects tuple(sample_id, bam, bai) as first input.
+            // Pass ch_wig_norm (HMMcopy 50kb normalization) as bincount so that
+            // gx-FF uses the same ~50k-bin coverage features as during training.
+            // Falling back to --bam would yield only ~457 features (mismatch).
             ch_bam_keyed = ch_bam.combine(ch_bai)
                 .map { bam, bai -> tuple(sample_name, bam, bai) }
 
             GXFF_PREDICT(
                 ch_bam_keyed,
-                ch_bincount,
+                ch_wig_norm,   // 50kb WIG normalization → same feature space as training
                 gxff_model
             )
             // Join seqFF and gx-FF on sample_id key
@@ -109,7 +112,7 @@ workflow FF_GENDER_WORKFLOW {
 
         // ── Ensemble: combine seqFF + gx-FF ──────────────────────────────────
         // GXFF_ENSEMBLE handles NO_FILE gxff_tsv → seqFF-only fallback.
-        GXFF_ENSEMBLE( ch_ensemble_input )
+        GXFF_ENSEMBLE( ch_ensemble_input, analysisdir )
 
         // ── Final gender decision ─────────────────────────────────────────────
         // GXFF_ENSEMBLE emits tuple(sample_id, path); strip the key for emit only.

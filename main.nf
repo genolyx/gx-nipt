@@ -90,9 +90,10 @@ params.force          = false
 params.gxff_model   = null   // e.g. /data/nipt/models/gxff_v1.pkl
 
 // ── gx-cnv parameters ────────────────────────────────────
-// Set to a .npz reference path to enable gx-cnv in parallel with WCX.
-// Leave as null to skip gx-cnv entirely.
-params.gxcnv_reference = null   // e.g. /data/nipt/refs/gxcnv_ref.npz
+// Set --run_gxcnv to enable gx-cnv in parallel with WCX.
+// Reference is resolved automatically by gender:
+//   {ref_dir}/labs/{labcode}/GXCNV/{female|male}/reference.npz
+params.run_gxcnv       = false  // set true to enable gx-cnv
 params.gxcnv_bin_size  = 100000 // bin size for gxcnv convert
 params.gxcnv_thresh_z  = -3.0   // Track A Z-score threshold
 params.gxcnv_thresh_p  = 0.05   // Track B p-value threshold
@@ -209,10 +210,8 @@ workflow {
         ? file(params.gxff_model, checkIfExists: true)
         : file('NO_FILE')
 
-    // gx-cnv reference: use NO_FILE sentinel when not provided
-    def gxcnv_ref_path = params.gxcnv_reference
-        ? file(params.gxcnv_reference, checkIfExists: true)
-        : file('NO_FILE')
+    // gx-cnv: gender-aware reference resolved automatically inside GXCNV_PREDICT
+    // {ref_dir}/labs/{labcode}/GXCNV/{female|male}/reference.npz
 
     // ── Alignment & BAM generation ────────────────────────
     if (!params.algorithm_only) {
@@ -268,21 +267,22 @@ workflow {
     ch_norm_10mb = HMMCOPY_WORKFLOW.out.norm_10mb   // (sample, group, path) for PRIZM
 
     // ── Fetal Fraction & Gender ───────────────────────────
-    // gx-FF bincount input is unused when gxff_model is absent — pass NO_FILE.
-    ch_bincount_sentinel = Channel.value(file('NO_FILE'))
-
-    // YFF2 needs the HMMcopy 50kb wig normalization file for the "orig" group.
-    // Filtering here creates an explicit data dependency on HMMCOPY_WORKFLOW.
+    // HMMcopy 50kb normalization for "orig" group:
+    //   - passed to CALCULATE_YFF2 (gd_2 calculation)
+    //   - passed to GXFF_PREDICT as bincount (same ~50k-bin feature space as training)
+    // Use .first() to convert to a value channel so it can be consumed twice
+    // without exhausting the queue (YFF2 and GXFF_PREDICT both need it).
     ch_wig_norm_orig = ch_norm_50kb
         .filter { _sample, group, _path -> group == "orig" }
         .map    { _sample, _group, path -> path }
+        .first()
 
     FF_GENDER_WORKFLOW(
         sample_name,
         ch_proper_bam,
         ch_proper_bai,
         ch_wig_norm_orig,
-        ch_bincount_sentinel,
+        ch_wig_norm_orig,  // bincount for gx-FF = same 50kb WIG (training-consistent)
         ch_config,
         labcode,
         analysisdir,
@@ -328,10 +328,11 @@ workflow {
         ch_config,
         labcode,
         analysisdir,
-        gxcnv_ref_path,
+        params.run_gxcnv,
         params.gxcnv_bin_size,
         params.gxcnv_thresh_z,
-        params.gxcnv_thresh_p
+        params.gxcnv_thresh_p,
+        ch_wig_norm_orig   // for gx-cnv GC injection
     )
     ch_wc_result         = WC_WORKFLOW.out.wc_result
     ch_gxcnv_calls       = WC_WORKFLOW.out.gxcnv_calls
@@ -364,7 +365,8 @@ workflow {
         ch_config,
         labcode,
         analysisdir,
-        outdir
+        outdir,
+        FF_GENDER_WORKFLOW.out.ff_ensemble   // ensures GXFF_ENSEMBLE finishes before report
     )
 }
 
@@ -374,8 +376,8 @@ workflow {
 workflow.onComplete {
     def status       = workflow.success ? "SUCCESS" : "FAILED"
     def duration     = workflow.duration
-    def gxff_status  = params.gxff_model       ? "ENABLED (${params.gxff_model})"      : "DISABLED (seqFF only)"
-    def gxcnv_status = params.gxcnv_reference  ? "ENABLED (${params.gxcnv_reference})" : "DISABLED"
+    def gxff_status  = params.gxff_model  ? "ENABLED (${params.gxff_model})"                                          : "DISABLED (seqFF only)"
+    def gxcnv_status = params.run_gxcnv  ? "ENABLED (auto: ${params.ref_dir}/labs/${params.labcode}/GXCNV/{sex}/)" : "DISABLED"
     def wcx_status   = params.run_wcx          ? "ENABLED" : "DISABLED"
     def ssd_status   = params.use_ssd          ? "ENABLED (${params.scratch_dir})"      : "DISABLED"
 

@@ -39,6 +39,7 @@ process GXFF_PREDICT {
         --model ${model_pkl} \\
         --out gxff_out \\
         --genome hg19 \\
+        --features coverage \\
         2>&1 | tee ${sample_id}.gxff.log
 
     # Copy canonical output to sample-named file consumed by GXFF_ENSEMBLE
@@ -75,8 +76,11 @@ process GXFF_ENSEMBLE {
     label 'process_low'
     label 'nipt_docker'
 
+    publishDir "${analysisdir}/${sample_id}/Output_FF", mode: 'copy', overwrite: true
+
     input:
     tuple val(sample_id), path(seqff_tsv), path(gxff_tsv)
+    val analysisdir
 
     output:
     tuple val(sample_id), path("${sample_id}.ff_ensemble.tsv"), emit: ff_tsv
@@ -146,27 +150,39 @@ try:
 except Exception as e:
     logger.warning("Could not read gx-FF TSV: %s", e)
 
+# ── Scale conversion ──────────────────────────────────────────────────────────
+# gx-FF model outputs FF in fraction scale [0, 1] (e.g. 0.0938 = 9.38%).
+# seqFF is in percentage scale (e.g. 9.38).
+# Convert gxFF to percentage for consistent ensemble and reporting.
+def to_pct(v):
+    # Convert fraction-scale gxFF value (0-1) to percentage (0-100)
+    return v * 100.0 if v is not None and not math.isnan(v) else v
+
+gxff_val_pct  = to_pct(gxff_val)
+lgbm_val_pct  = to_pct(lgbm_val)
+dnn_val_pct   = to_pct(dnn_val)
+
 # ── Ensemble decision ─────────────────────────────────────────────────────────
+# All values are now in percentage scale.
 gxff_ok  = gxff_val is not None and not math.isnan(gxff_val) and "FAIL" not in qc_flags.upper()
 seqff_ok = seqff_val is not None and not math.isnan(seqff_val)
 
 if gxff_ok and seqff_ok:
+    # gxff_val < 0.05 in fraction scale == gxff_val_pct < 5% in percentage
     is_low_ff = gxff_val < 0.05 or "low_ff" in qc_flags.lower()
     if is_low_ff:
-        # At low FF, gx-FF is more accurate (trained with oversampling)
-        ff_final = gxff_val
+        ff_final = gxff_val_pct
         method   = "gxff_only_low_ff"
-        logger.info("Low-FF regime: using gx-FF exclusively (FF=%.4f)", ff_final)
+        logger.info("Low-FF regime: using gx-FF exclusively (FF=%.2f%%)", ff_final)
     else:
-        # Standard regime: weighted ensemble
-        ff_final = 0.6 * gxff_val + 0.4 * seqff_val
+        ff_final = 0.6 * gxff_val_pct + 0.4 * seqff_val
         method   = "ensemble_0.6gxff_0.4seqff"
         logger.info(
-            "Ensemble: gxFF=%.4f seqFF=%.4f -> final=%.4f",
-            gxff_val, seqff_val, ff_final,
+            "Ensemble: gxFF=%.2f%% seqFF=%.2f%% -> final=%.2f%%",
+            gxff_val_pct, seqff_val, ff_final,
         )
 elif gxff_ok:
-    ff_final = gxff_val
+    ff_final = gxff_val_pct
     method   = "gxff_only"
     logger.warning("seqFF unavailable; using gx-FF only")
 elif seqff_ok:
@@ -184,9 +200,9 @@ row = [
     sample_id,
     f"{ff_final:.4f}" if not math.isnan(ff_final) else "NA",
     f"{seqff_val:.4f}" if seqff_ok else "NA",
-    f"{gxff_val:.4f}" if gxff_ok else "NA",
-    f"{lgbm_val:.4f}" if lgbm_val is not None and not math.isnan(lgbm_val) else "NA",
-    f"{dnn_val:.4f}"  if dnn_val  is not None and not math.isnan(dnn_val)  else "NA",
+    f"{gxff_val_pct:.4f}" if gxff_ok else "NA",
+    f"{lgbm_val_pct:.4f}" if lgbm_val_pct is not None and not math.isnan(lgbm_val_pct) else "NA",
+    f"{dnn_val_pct:.4f}"  if dnn_val_pct  is not None and not math.isnan(dnn_val_pct)  else "NA",
     method,
     qc_flags,
 ]

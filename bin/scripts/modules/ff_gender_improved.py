@@ -451,7 +451,7 @@ def _frag_ff_failed(sample_name: str, reason: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Gender Decision: Weighted ensemble
+# Gender Decision
 # ─────────────────────────────────────────────────────────────────────────────
 
 def gender_decision(
@@ -463,63 +463,85 @@ def gender_decision(
     config: dict,
 ) -> Tuple[dict, dict]:
     """
-    Make final gender decision using weighted ensemble of all FF estimates.
+    Make final gender decision based on gd_2 with Y-signal consistency check.
 
-    Priority order:
-      1. gd_2 (YFF2 ratio) - most reliable for gender
-      2. gd_1 (YFF1 ratio) - backup
-      3. Fragment size distribution (gd_4)
+    Primary decision: gd_2 (14 specific Y-position ratio, highest specificity).
+
+    Y-signal inconsistency correction:
+      If gd_2 calls XY but the Y-based FF (YFF2) and the fragment-based FF
+      (M-SeqFF) diverge strongly, the Y signal is likely noise from a female fetus.
+
+      Condition (data-driven, 434 normal XY samples, 99%ile bound = +4.5):
+        gd_2 = XY  AND  YFF2 < yff_threshold  AND  M-SeqFF - YFF2 > y_signal_inconsistency_threshold
+        → reclassify as XX (female suspect)
+
+      Rationale: M-SeqFF is calibrated to equal YFF2 for true XY samples
+      (correction = median YFF2 − SeqFF across normal XY cohort ≈ 4.12).
+      When M-SeqFF >> YFF2, the fragment pattern detects more fetal DNA than
+      the Y chromosome signal can explain, indicating Y reads are noise.
 
     FF value priority:
-      1. YFF2 (for male fetus)
-      2. SeqFF (gender-independent)
-      3. M-SeqFF (fragment-based, gender-independent)
-      4. YFF1 (for male fetus)
+      Male  fetus: YFF2 > SeqFF > M-SeqFF > YFF1
+      Female fetus: M-SeqFF > SeqFF > Fragment_FF
     """
     ff_config = config.get("FF_Gender_Config", {})
-    yff_threshold = ff_config.get("YFF", 4.0)
-    seqff_threshold = ff_config.get("seqFF", 4.0)
+    yff_threshold        = ff_config.get("YFF", 4.0)
+    mseqff_correction    = ff_config.get("mseqff_correction", 4.12)
+    # Threshold for M-SeqFF − YFF2 discrepancy that flags a Y-signal as noise.
+    # Derived from normal XY cohort: 99%ile of (M-SeqFF − YFF2) ≈ 4.5
+    y_inconsistency_thr  = ff_config.get("y_signal_inconsistency_threshold", 5.0)
 
-    # ── Gender determination ──────────────────────────────
+    # ── FF values ────────────────────────────────────────
+    yff2_val    = yff2.get("YFF2", 0.0)
+    seqff_val   = seqff.get("SeqFF", 0.0)
+    m_seqff     = round(seqff_val + mseqff_correction, 4) if seqff_val > 0.0 \
+                  else frag_ff.get("M-SeqFF", 0.0)
+    frag_ff_val = frag_ff.get("Fragment_FF", 0.0)
+    yff1_val    = yff1.get("YFF1", 0.0)
+
+    # ── Primary gender from gd_2 ─────────────────────────
     gd_2_gender = yff2.get("gd_2_gender", "UNKNOWN")
-    gd_1_gender = yff1.get("gd_1_gender", "UNKNOWN")
+    final_gender = gd_2_gender if gd_2_gender in ("XY", "XX") else "UNKNOWN"
+    gender_source = "gd_2"
 
-    # Primary: gd_2
-    if gd_2_gender in ("XY", "XX"):
-        final_gender = gd_2_gender
-        gender_source = "gd_2"
-    elif gd_1_gender in ("XY", "XX"):
-        final_gender = gd_1_gender
-        gender_source = "gd_1"
-    else:
-        final_gender = "UNKNOWN"
-        gender_source = "none"
+    # ── Y-signal inconsistency check ─────────────────────
+    # Applied only when gd_2 says XY but YFF2 is below the FF quality threshold.
+    # M-SeqFF ≈ YFF2 for true XY (by calibration). If M-SeqFF >> YFF2, Y reads
+    # are noise level and the fetus is likely female.
+    mseqff_yff2_gap = round(m_seqff - yff2_val, 4)
+    y_signal_suspect = False
+    if (
+        final_gender == "XY"
+        and yff2_val < yff_threshold          # Y signal below FF quality cutoff
+        and mseqff_yff2_gap > y_inconsistency_thr   # fragment FF >> Y-based FF
+    ):
+        y_signal_suspect = True
+        final_gender = "XX"
+        gender_source = (
+            f"gd_2=XY overridden (YFF2={yff2_val:.2f}% < {yff_threshold}%, "
+            f"M-SeqFF−YFF2={mseqff_yff2_gap:.2f} > {y_inconsistency_thr})"
+        )
+        logger.warning(
+            f"{sample_name}: gd_2 called XY but Y signal is inconsistent with "
+            f"fragment-based FF → reclassified as XX (female suspect). "
+            f"YFF2={yff2_val:.2f}  M-SeqFF={m_seqff:.2f}  gap={mseqff_yff2_gap:.2f}"
+        )
 
     # ── FF value selection ────────────────────────────────
-    yff2_val   = yff2.get("YFF2", 0.0)
-    seqff_val  = seqff.get("SeqFF", 0.0)
-    # M-SeqFF = SeqFF (R-based) + 4.0 bias correction (matches ken-nipt formula)
-    m_seqff    = round(seqff_val + 4.0, 4) if seqff_val > 0.0 else frag_ff.get("M-SeqFF", 0.0)
-    frag_ff_val= frag_ff.get("Fragment_FF", 0.0)
-    yff1_val   = yff1.get("YFF1", 0.0)
-
-    # For male fetus: YFF2 is most reliable
-    # For female fetus: SeqFF or M-SeqFF
     if final_gender == "XY":
         ff_candidates = [
-            ("YFF2",    yff2_val),
-            ("SeqFF",   seqff_val),
-            ("M-SeqFF", m_seqff),
-            ("YFF1",    yff1_val),
+            ("YFF2",       yff2_val),
+            ("SeqFF",      seqff_val),
+            ("M-SeqFF",    m_seqff),
+            ("YFF1",       yff1_val),
         ]
     else:
         ff_candidates = [
-            ("SeqFF",   seqff_val),
-            ("M-SeqFF", m_seqff),
+            ("M-SeqFF",    m_seqff),
+            ("SeqFF",      seqff_val),
             ("Fragment_FF", frag_ff_val),
         ]
 
-    # Pick first non-zero candidate
     final_ff = 0.0
     ff_source = "none"
     for name, val in ff_candidates:
@@ -529,32 +551,37 @@ def gender_decision(
             break
 
     # ── Low FF warning ────────────────────────────────────
-    low_ff_warning = final_ff < yff_threshold and final_ff > 0.0
+    low_ff_warning = 0.0 < final_ff < yff_threshold
 
     logger.info(
         f"Gender Decision - gender: {final_gender} (source: {gender_source}), "
         f"FF: {final_ff:.2f}% (source: {ff_source}), "
+        f"M-SeqFF−YFF2: {mseqff_yff2_gap:.2f}, "
+        f"y_signal_suspect: {y_signal_suspect}, "
         f"low_ff_warning: {low_ff_warning}"
     )
 
     # ── Build output structures ───────────────────────────
     ff_result = {
-        "sample_name": sample_name,
-        "Fragment_FF": round(frag_ff.get("Fragment_FF", 0.0), 4),
-        "YFF_2":       round(yff2_val, 4),
-        "SeqFF":       round(seqff_val, 4),
-        "M-SeqFF":     round(m_seqff, 4),
-        "Final_FF":    round(final_ff, 4),
-        "FF_Source":   ff_source,
-        "low_ff_warning": low_ff_warning,
+        "sample_name":       sample_name,
+        "Fragment_FF":       round(frag_ff.get("Fragment_FF", 0.0), 4),
+        "YFF_2":             round(yff2_val, 4),
+        "SeqFF":             round(seqff_val, 4),
+        "M-SeqFF":           round(m_seqff, 4),
+        "Final_FF":          round(final_ff, 4),
+        "FF_Source":         ff_source,
+        "low_ff_warning":    low_ff_warning,
+        "y_signal_suspect":  y_signal_suspect,
+        "mseqff_yff2_gap":   mseqff_yff2_gap,
     }
 
     gender_result = {
-        "sample_name": sample_name,
-        "gd_1":  f"gd_1\t{yff1.get('gd_1_value', 0.0):.6f}\t{yff1.get('gd_1_gender', 'UNKNOWN')}",
-        "gd_2":  f"gd_2\t{yff2.get('gd_2_value', 0.0):.6f}\t{yff2.get('gd_2_gender', 'UNKNOWN')}",
-        "final_gender": final_gender,
+        "sample_name":   sample_name,
+        "gd_1":          f"gd_1\t{yff1.get('gd_1_value', 0.0):.6f}\t{yff1.get('gd_1_gender', 'UNKNOWN')}",
+        "gd_2":          f"gd_2\t{yff2.get('gd_2_value', 0.0):.6f}\t{yff2.get('gd_2_gender', 'UNKNOWN')}",
+        "final_gender":  final_gender,
         "gender_source": gender_source,
+        "y_signal_suspect": y_signal_suspect,
     }
 
     return ff_result, gender_result
@@ -582,6 +609,8 @@ def write_gender_txt(gender_result: dict, output_path: str) -> None:
         f.write(f"{gender_result['gd_1']}\n")
         f.write(f"{gender_result['gd_2']}\n")
         f.write(f"final_gender\t{gender_result['final_gender']}\t{gender_result['final_gender']}\n")
+        if gender_result.get("y_signal_suspect"):
+            f.write(f"y_signal_suspect\tTRUE\tXX\n")
 
 
 def write_yff_txt(result: dict, output_path: str, keys: list) -> None:

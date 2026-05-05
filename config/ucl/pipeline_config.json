@@ -23,7 +23,9 @@
     "fragment_size_cutoff": 160,
     "gd_1_threshold": 0.01,
     "gd_2_threshold": 0.4,
-    "gd_3_threshold": 0.02
+    "gd_3_threshold": 0.02,
+    "mseqff_correction": 4.12,
+    "y_signal_inconsistency_threshold": 5.0
   },
   "lab_bed_paths": {
     "y_regions_09": "/home/ken/gx-nipt/refs/bed/common/chrY_target_0.9.bed",

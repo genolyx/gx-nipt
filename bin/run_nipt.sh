@@ -49,7 +49,7 @@ ALGORITHM_ONLY="false"
 FORCE="false"
 FRESH="false"
 GXFF_MODEL=""
-GXCNV_REFERENCE=""
+RUN_GXCNV="false"
 RUN_WCX="true"
 
 # SSD scratch
@@ -86,12 +86,10 @@ Optional:
   --force                    Re-run even if <order_id>.completed marker exists
   --fresh                    Clear any .nextflow/ resume cache for this sample
   --gxff-model <.pkl>        Enable gx-FF (LightGBM + DNN) ensemble
-                             (deferred: no default model yet; leave unset
-                             to fall back to seqFF-only FF estimation)
-  --gxcnv-reference <.npz>   Enable gx-cnv parallel CNV track
-  --gxcnv-model <.npz|.pkl>  Alias for --gxcnv-reference (deferred: no
-                             default reference yet; leave unset to fall
-                             back to WisecondorX-only CNV calling)
+                             (leave unset to fall back to seqFF-only)
+  --run-gxcnv                Enable gx-cnv parallel CNV track
+                             Reference auto-resolved by gender:
+                               <ref-dir>/labs/<labcode>/GXCNV/{female|male}/reference.npz
   --no-wcx                   Disable WisecondorX (once gx-cnv is validated)
   --use-ssd                  Enable SSD scratch (Strategy B)
   --scratch-dir <path>       SSD mount point (default: /tmp/nipt_scratch)
@@ -130,8 +128,10 @@ while [[ $# -gt 0 ]]; do
         --force|-f)          FORCE="true"; shift ;;
         --fresh)             FRESH="true"; shift ;;
         --gxff-model)        GXFF_MODEL="$2"; shift 2 ;;
+        --run-gxcnv)         RUN_GXCNV="true"; shift ;;
         --gxcnv-reference|--gxcnv-model)
-                             GXCNV_REFERENCE="$2"; shift 2 ;;
+                             echo "[run_nipt] --gxcnv-reference is deprecated; use --run-gxcnv (reference auto-resolved by gender)" >&2
+                             RUN_GXCNV="true"; shift 2 ;;
         --no-wcx)            RUN_WCX="false"; shift ;;
         --use-ssd)           USE_SSD="true"; shift ;;
         --scratch-dir)       SCRATCH_DIR="$2"; shift 2 ;;
@@ -322,7 +322,7 @@ if [[ -n "$FASTQ_R1_NAME" ]]; then NF_ARGS+=( --fastq_r1 "$FASTQ_R1_NAME" --fast
 if [[ "$ALGORITHM_ONLY" == "true" ]]; then NF_ARGS+=( --algorithm_only true ); fi
 if [[ "$FORCE" == "true" ]];          then NF_ARGS+=( --force true ); fi
 if [[ -n "$GXFF_MODEL" ]];       then NF_ARGS+=( --gxff_model "$GXFF_MODEL" ); fi
-if [[ -n "$GXCNV_REFERENCE" ]];  then NF_ARGS+=( --gxcnv_reference "$GXCNV_REFERENCE" ); fi
+if [[ "$RUN_GXCNV" == "true" ]]; then NF_ARGS+=( --run_gxcnv true ); fi
 if [[ "$RUN_WCX" == "false" ]];  then NF_ARGS+=( --run_wcx false ); fi
 if [[ -n "$REF_DIR" ]];          then NF_ARGS+=( --ref_dir "$REF_DIR" ); fi
 

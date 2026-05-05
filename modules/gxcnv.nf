@@ -61,6 +61,156 @@ process GXCNV_CONVERT {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Step 1b: Inject GC fractions from HMMcopy 50kb WIG → NPZ
+//
+// gxcnv convert does not compute GC fractions from BAM input (bins[:,3] = NaN),
+// so GC correction is skipped.  The reference panel was built with GC-corrected
+// NPZ files; using uncorrected sample NPZ causes systematic Z-score artefacts.
+//
+// This process patches the NPZ in-place:
+//   1. Load HMMcopy 50kb wig normalization file.
+//   2. Aggregate adjacent 50 kb bins → 100 kb GC fractions (mean of valid bins).
+//   3. Write GC fractions into bins[:,3].
+//   4. Re-run polynomial GC correction (degree 3).
+//   5. Re-normalise corrected counts to reads-per-valid-bin equivalent.
+// ─────────────────────────────────────────────────────────────────────────────
+process GXCNV_GC_INJECT {
+    tag "${sample_id}"
+    label 'process_low'
+    label 'nipt_docker'
+
+    input:
+    tuple val(sample_id), path(sample_npz)
+    path  wig_norm   // HMMcopy 50 kb normalization file (orig group)
+
+    output:
+    tuple val(sample_id), path("${sample_id}.gxcnv.gc.npz"), emit: npz
+    path  "${sample_id}.gxcnv_gc_inject.log",                emit: log
+
+    script:
+    """
+    set -euo pipefail
+
+    python3 - <<'PYEOF'
+import sys, logging
+import numpy as np
+import pandas as pd
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [gc_inject] %(levelname)s %(message)s",
+    handlers=[
+        logging.FileHandler("${sample_id}.gxcnv_gc_inject.log"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+logger = logging.getLogger(__name__)
+
+# ── Load GC map from HMMcopy 50kb wig ────────────────────────────────────────
+wig_path = "${wig_norm}"
+try:
+    df = pd.read_csv(
+        wig_path, sep="\\t",
+        names=["chr","start","end","reads","gc","map","valid",
+               "ideal","cor.gc","cor.map","copy"],
+        header=0, dtype={"chr": str},
+    )
+except Exception as e:
+    logger.error("Cannot read wig %s: %s", wig_path, e)
+    sys.exit(1)
+
+df["gc"] = pd.to_numeric(df["gc"], errors="coerce")
+df = df[df["gc"] > 0].copy()
+df["start_100k"] = (df["start"].astype(int) // 100_000) * 100_000
+gc_map = df.groupby(["chr", "start_100k"])["gc"].mean().reset_index()
+gc_lookup = {(row.chr, int(row.start_100k)): float(row.gc)
+             for row in gc_map.itertuples(index=False)}
+logger.info("GC map loaded: %d 100kb entries", len(gc_lookup))
+
+# ── Load NPZ ──────────────────────────────────────────────────────────────────
+d      = dict(np.load("${sample_npz}", allow_pickle=True))
+bins   = d["bins"]        # (N, 4): chrom_idx, start, end, gc
+chroms = list(d["chroms"])
+counts = d["counts"].astype(float)
+mask   = d["mask"].astype(bool)
+
+# ── Inject GC fractions ───────────────────────────────────────────────────────
+gc_fractions = np.full(len(bins), np.nan, dtype=np.float32)
+hit = 0
+for i, (chrom_idx, start, end, _) in enumerate(bins):
+    key = (chroms[int(chrom_idx)], int(start))
+    if key in gc_lookup:
+        gc_fractions[i] = gc_lookup[key]
+        hit += 1
+
+frac_hit = hit / max(len(bins), 1)
+logger.info("GC hit rate: %d/%d (%.1f%%)", hit, len(bins), 100 * frac_hit)
+
+if frac_hit < 0.3:
+    logger.warning("Low GC hit rate — skipping GC correction; using raw counts")
+    corrected = np.full(len(counts), np.nan)
+    valid = mask & (counts > 0)
+    corrected[valid] = counts[valid].astype(float)
+    s = np.nansum(corrected[mask])
+    if s > 0:
+        corrected /= s / mask.sum()
+    d["corrected"] = corrected
+    bins[:, 3] = gc_fractions
+    d["bins"] = bins
+else:
+    bins[:, 3] = gc_fractions
+    d["bins"] = bins
+
+    # ── Polynomial GC correction (degree 3) ──────────────────────────────────
+    poly_degree = 3
+    corrected   = np.full(len(counts), np.nan)
+    valid = mask & (counts > 0) & np.isfinite(gc_fractions)
+
+    if valid.sum() >= poly_degree + 1:
+        gc_bins    = np.linspace(0, 1, 101)
+        gc_idx     = np.clip(np.digitize(gc_fractions[valid], gc_bins) - 1, 0, 99)
+        gc_centers = (gc_bins[:-1] + gc_bins[1:]) / 2
+        gc_medians = np.full(100, np.nan)
+        for i in range(100):
+            in_bin = valid.nonzero()[0][gc_idx == i]
+            if len(in_bin) >= 3:
+                gc_medians[i] = np.median(counts[in_bin])
+        finite = np.isfinite(gc_medians)
+        if finite.sum() >= poly_degree + 1:
+            coeffs    = np.polyfit(gc_centers[finite], gc_medians[finite], poly_degree)
+            predicted = np.polyval(coeffs, gc_fractions[valid])
+            predicted = np.where(predicted <= 0, np.nan, predicted)
+            global_med = np.nanmedian(gc_medians[finite])
+            adj = counts[valid].astype(float) / predicted * global_med
+            corrected[valid] = np.where(np.isfinite(adj), adj, np.nan)
+            logger.info("GC correction applied (poly degree %d)", poly_degree)
+        else:
+            corrected[valid] = counts[valid].astype(float)
+            logger.warning("Not enough GC bins for poly fit — using raw counts")
+    else:
+        corrected[valid] = counts[valid].astype(float)
+        logger.warning("Not enough valid bins — using raw counts")
+
+    # Re-normalise
+    s = np.nansum(corrected[mask])
+    if s > 0:
+        corrected = corrected / s * mask.sum()
+    d["corrected"] = corrected
+
+np.savez_compressed("${sample_id}.gxcnv.gc", **d)
+logger.info("GC-injected NPZ saved: ${sample_id}.gxcnv.gc.npz")
+PYEOF
+    """
+
+    stub:
+    """
+    python3 -c "import numpy as np; np.savez_compressed('${sample_id}.gxcnv.gc', bins=np.zeros((30000,4)), counts=np.zeros(30000), mask=np.ones(30000,dtype=bool), chroms=['chr1'], corrected=np.zeros(30000))"
+    touch ${sample_id}.gxcnv_gc_inject.log
+    """
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Step 2: Build reference panel (run once, not per-sample)
 // ─────────────────────────────────────────────────────────────────────────────
 process GXCNV_NEWREF {
@@ -114,7 +264,8 @@ process GXCNV_PREDICT {
 
     input:
     tuple val(sample_id), path(sample_npz)
-    path  reference_npz
+    path  gender_txt      // <sample>.gender.txt — parsed to select female/male reference
+    val   labcode
     val   thresh_z
     val   thresh_p
     val   fetal_fraction   // from FF ensemble step; "NA" if unavailable
@@ -134,9 +285,30 @@ process GXCNV_PREDICT {
     """
     set -euo pipefail
 
+    # ── Resolve gender-specific reference (mirrors WisecondorX logic) ──────────
+    GENDER=\$(awk -F'[\\t ]+' 'tolower(\$1) == "final_gender" {
+        g = toupper(\$2)
+        if (g == "XY" || g == "MALE"   || g == "M") { print "male";   exit }
+        if (g == "XX" || g == "FEMALE" || g == "F") { print "female"; exit }
+    }' ${gender_txt})
+
+    if [ -z "\${GENDER}" ]; then
+        echo "[GXCNV] Could not parse final_gender from ${gender_txt}; defaulting to female." >&2
+        GENDER="female"
+    fi
+    echo "[GXCNV] Detected gender: \${GENDER}"
+
+    REF_NPZ="${params.ref_dir}/labs/${labcode}/GXCNV/\${GENDER}/reference.npz"
+
+    if [ ! -f "\${REF_NPZ}" ]; then
+        echo "ERROR: gx-cnv reference not found: \${REF_NPZ}" >&2
+        exit 1
+    fi
+
+    # ── Run prediction ──────────────────────────────────────────────────────────
     gxcnv predict \\
         ${sample_npz} \\
-        ${reference_npz} \\
+        "\${REF_NPZ}" \\
         -o ${sample_id} \\
         --thresh-z ${thresh_z} \\
         --thresh-p ${thresh_p} \\

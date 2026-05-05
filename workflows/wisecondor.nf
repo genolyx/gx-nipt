@@ -20,11 +20,12 @@
  * =========================================================
  */
 
-include { RUN_WC }          from '../modules/wisecondor'
-include { RUN_WCX }         from '../modules/wisecondor'
-include { GXCNV_CONVERT }   from '../modules/gxcnv'
-include { GXCNV_PREDICT }   from '../modules/gxcnv'
-include { GXCNV_COMPARE }   from '../modules/gxcnv'
+include { RUN_WC }            from '../modules/wisecondor'
+include { RUN_WCX }           from '../modules/wisecondor'
+include { GXCNV_CONVERT }     from '../modules/gxcnv'
+include { GXCNV_GC_INJECT }   from '../modules/gxcnv'
+include { GXCNV_PREDICT }     from '../modules/gxcnv'
+include { GXCNV_COMPARE }     from '../modules/gxcnv'
 
 workflow WC_WORKFLOW {
     take:
@@ -33,10 +34,11 @@ workflow WC_WORKFLOW {
         ch_config        // path: pipeline_config.json
         labcode          // val: lab identifier
         analysisdir      // val: output directory root
-        gxcnv_reference  // path: pre-built gx-cnv reference .npz (or NO_FILE to skip)
+        run_gxcnv        // val: boolean — enable gx-cnv (reference auto-resolved from ref_dir/labcode/GXCNV/{sex})
         gxcnv_bin_size   // val: bin size for gxcnv convert (default: 100000)
         gxcnv_thresh_z   // val: Track A Z-score threshold (default: -3.0)
         gxcnv_thresh_p   // val: Track B p-value threshold (default: 0.05)
+        wig_norm_orig    // path: HMMcopy 50kb normalization (orig group) for GC injection
 
     main:
         // ── Flatten trio → per-group (sample, group, bam, bai) tuples ──
@@ -71,22 +73,33 @@ workflow WC_WORKFLOW {
         }
 
         // ── gx-cnv (orig BAM only, validation mode) ─────────────────────
+        // Reference is gender-aware: ref_dir/labs/{labcode}/GXCNV/{female|male}/reference.npz
         ch_gxcnv_calls      = Channel.empty()
         ch_gxcnv_comparison = Channel.empty()
 
-        if ( gxcnv_reference.name != 'NO_FILE' ) {
+        if ( run_gxcnv ) {
             // gxcnv operates on the maternal-plasma (orig) BAM
             ch_bam_orig = bam_trio.map { t -> tuple(t[0], t[1], t[2]) }
 
+            // Step 1: BAM → NPZ (GC fractions will be NaN at this point)
             GXCNV_CONVERT(
                 ch_bam_orig,
                 gxcnv_bin_size,
                 file('NO_FILE')   // optional blacklist BED — not used by default
             )
 
-            GXCNV_PREDICT(
+            // Step 1b: Inject GC fractions from HMMcopy WIG + re-apply GC correction
+            // The reference panel was built with GC-corrected NPZ files; without this
+            // step the sample Z-scores are systematically biased.
+            GXCNV_GC_INJECT(
                 GXCNV_CONVERT.out.npz,
-                gxcnv_reference,
+                wig_norm_orig
+            )
+
+            GXCNV_PREDICT(
+                GXCNV_GC_INJECT.out.npz,
+                gender_txt,       // parsed in process script to select female/male reference
+                labcode,
                 gxcnv_thresh_z,
                 gxcnv_thresh_p,
                 Channel.value('NA'),  // FF passed as placeholder (FF join TODO)
