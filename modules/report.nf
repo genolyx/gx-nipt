@@ -155,6 +155,7 @@ process COPY_TO_OUTPUT {
         mkdir -p ${outdir}/Output_hmmcopy
         mkdir -p ${outdir}/Output_MD
         mkdir -p ${outdir}/Output_Result
+        mkdir -p ${outdir}/gxcnv2
 
         # Copy analysis results to output directory
         _copy() { [ -d "\$1" ] && cp -a "\$1/." "\$2/" || true; }
@@ -166,6 +167,7 @@ process COPY_TO_OUTPUT {
         _copy ${analysisdir}/${sample_name}/Output_WCX     ${outdir}/Output_WCX
         _copy ${analysisdir}/${sample_name}/Output_hmmcopy ${outdir}/Output_hmmcopy
         _copy ${analysisdir}/${sample_name}/Output_MD      ${outdir}/Output_MD
+        _copy ${analysisdir}/${sample_name}/gxcnv2         ${outdir}/gxcnv2
 
         # Copy final report
         cp ${json_file} ${outdir}/Output_Result/

@@ -155,15 +155,19 @@ def read_fetal_fraction_data(ff_path, gender_path):
     """
     yff_raw = 0.0   # numeric YFF_2 value
     seqff = 0.0
+    final_ff = 0.0
+    ff_source = "none"
     gender = "Unknown"
     ff_ratio = 0.0
 
     try:
         # 1. Fetal fraction 파일 읽기
-        # fetal_fraction.txt format (tab-separated, first column unnamed):
+        # fetal_fraction.txt format (tab-separated, first column is field name):
         #   Fragment_FF / YFF_2 / SeqFF / M-SeqFF / Final_FF / FF_Source
-        # SeqFF  = GC-corrected coverage-based FF  ← use this for seqFF report
-        # M-SeqFF= maternal-corrected fragment FF  ← NOT the seqFF to report
+        # Final_FF: gender-based authoritative FF
+        #   Male   → YFF_2 (primary) → SeqFF → M-SeqFF → YFF_1
+        #   Female → M-SeqFF (primary) → SeqFF → Fragment_FF
+        # M-SeqFF is stored as seqff for legacy QC compatibility (Female QC uses M-SeqFF)
         try:
             ff_df = pd.read_csv(ff_path, sep="\t")
 
@@ -172,19 +176,25 @@ def read_fetal_fraction_data(ff_path, gender_path):
                 try:
                     ff_value = float(row.iloc[1])
                 except (ValueError, TypeError):
-                    continue  # skip non-numeric rows (e.g. FF_Source)
+                    # FF_Source is non-numeric — capture it separately
+                    if ff_type == "FF_Source":
+                        ff_source = str(row.iloc[1]) if len(row) > 1 else "none"
+                    continue
 
                 if ff_type == "YFF_2":
                     yff_raw = ff_value
                 elif ff_type == "M-SeqFF":
                     seqff = ff_value
+                elif ff_type == "Final_FF":
+                    final_ff = ff_value
 
         except Exception as e:
             logger.error(f"Error reading fetal fraction file {ff_path}: {e}")
             yff_raw = 0.0
             seqff = 0.0
+            final_ff = 0.0
 
-        logger.info(f"yff_raw : {yff_raw}, seqff : {seqff}")
+        logger.info(f"yff_raw : {yff_raw}, seqff : {seqff}, final_ff : {final_ff}")
 
         # 2. Gender 파일 읽기
         # gender.txt format (3 columns: name / value / gender):
@@ -232,6 +242,8 @@ def read_fetal_fraction_data(ff_path, gender_path):
             "gender": gender,
             "yff": yff,
             "seqff": seqff,
+            "final_ff": round(final_ff, 4),
+            "ff_source": ff_source,
             "ff_ratio": ff_ratio,
         }
 
@@ -344,6 +356,9 @@ def read_gxff_ensemble(analysis_dir, sample_name):
             for row in reader:
                 return {
                     "ff_gxff":   row.get("FF_GXFF",   "N/A"),
+                    "ff_seqff":  row.get("FF_SEQFF",  "N/A"),
+                    "ff_lgbm":   row.get("FF_LGBM",   "N/A"),
+                    "ff_dnn":    row.get("FF_DNN",     "N/A"),
                     "ff_final":  row.get("FF_FINAL",  "N/A"),
                     "ff_method": row.get("FF_METHOD", "N/A"),
                     "qc_flags":  row.get("QC_FLAGS",  "N/A"),
@@ -353,44 +368,273 @@ def read_gxff_ensemble(analysis_dir, sample_name):
     return None
 
 
+def read_gxcnv_group(analysis_dir, sample_name, group="orig"):
+    """
+    Read gx-cnv predict results for a single group (orig / fetus / mom).
+
+    Returns dict with calls, regions_detail, figures, or None if not available.
+    The composite id written by the pipeline is '{sample_name}_{group}'.
+    """
+    gxcnv_dir    = f"{analysis_dir}/{sample_name}/gxcnv"
+    composite_id = f"{sample_name}_{group}"
+    calls_path   = f"{gxcnv_dir}/{composite_id}_calls.tsv"
+    regions_path = f"{gxcnv_dir}/{composite_id}_regions.tsv"
+
+    # Fall back to plain sample_name for orig (legacy runs without group suffix)
+    if group == "orig" and not os.path.isfile(calls_path):
+        composite_id = sample_name
+        calls_path   = f"{gxcnv_dir}/{composite_id}_calls.tsv"
+        regions_path = f"{gxcnv_dir}/{composite_id}_regions.tsv"
+
+    if not os.path.isfile(regions_path):
+        return None
+
+    calls   = []
+    regions = []
+    skipped = False
+
+    for path, is_calls in [(calls_path, True), (regions_path, False)]:
+        if not os.path.isfile(path):
+            continue
+        header = None
+        with open(path) as f:
+            for line in f:
+                line = line.rstrip()
+                if line.startswith("##gxcnv_skip=true"):
+                    skipped = True
+                    break
+                if line.startswith("##"):
+                    continue
+                if line.startswith("#"):
+                    header = line.lstrip("#").split("\t")
+                    continue
+                if header is None:
+                    continue
+                row = dict(zip(header, line.split("\t")))
+                rname = row.get("region_name", "")
+                if not rname:
+                    continue
+                entry = {
+                    "region":    rname,
+                    "chrom":     row.get("chrom", ""),
+                    "start":     row.get("start", ""),
+                    "end":       row.get("end",   ""),
+                    "call":      row.get("dual_call", row.get("track_a_result", "LOW_RISK")),
+                    "track_a_z": row.get("track_a_mean_z", "NA"),
+                    "track_b_p": row.get("track_b_pvalue",  "NA"),
+                    "risk_pct":  row.get("risk_pct", "NA"),
+                }
+                if is_calls:
+                    calls.append(entry)
+                else:
+                    regions.append(entry)
+
+    if skipped:
+        return None
+
+    def _fig(suffix):
+        full = f"{gxcnv_dir}/{composite_id}_{suffix}.png"
+        rel  = f"gxcnv/{composite_id}_{suffix}.png"
+        return rel if os.path.isfile(full) and os.path.getsize(full) > 0 else None
+
+    n_high_risk = len(calls)
+    return {
+        "group":          group,
+        "n_high_risk":    n_high_risk,
+        "calls":          calls,
+        "regions_detail": regions,
+        "figures": {
+            "genome":  _fig("genome"),
+            "regions": _fig("regions"),
+            "qc":      _fig("qc"),
+        },
+    }
+
+
+def read_gxcnv_all_groups(analysis_dir, sample_name):
+    """Read gx-cnv results for orig, fetus, mom. Returns dict keyed by group."""
+    result = {}
+    for grp in ("orig", "fetus", "mom"):
+        data = read_gxcnv_group(analysis_dir, sample_name, grp)
+        if data is not None:
+            result[grp] = data
+    return result or None
+
+
+def read_gxcnv2_group(analysis_dir, sample_name, group="orig"):
+    """
+    Read gxcnv2 predict results for a single group (orig / fetus / mom).
+
+    Returns dict with calls, qc_metrics, figures, or None if not available.
+    The composite id written by the pipeline is '{sample_name}_{group}'.
+    """
+    gxcnv2_dir   = f"{analysis_dir}/{sample_name}/gxcnv2"
+    composite_id = f"{sample_name}_{group}"
+    calls_path   = f"{gxcnv2_dir}/{composite_id}_calls.tsv"
+    qc_path      = f"{gxcnv2_dir}/{composite_id}_qcmetrics.tsv"
+
+    if not os.path.isfile(calls_path):
+        return None
+
+    calls   = []
+    skipped = False
+
+    # Read calls TSV
+    # columns: #chrom  start  end  type  mean_log2_ratio  mean_z  mean_mad_z  n_bins
+    with open(calls_path) as f:
+        header = None
+        for line in f:
+            line = line.rstrip()
+            if line.startswith("##gxcnv2_skip=true"):
+                skipped = True
+                break
+            if line.startswith("##"):
+                continue
+            if line.startswith("#"):
+                header = line.lstrip("#").split("\t")
+                continue
+            if header is None or not line:
+                continue
+            row = dict(zip(header, line.split("\t")))
+            chrom = row.get("chrom", "")
+            if not chrom:
+                continue
+            calls.append({
+                "chrom":           chrom,
+                "start":           row.get("start", ""),
+                "end":             row.get("end",   ""),
+                "type":            row.get("type",  ""),
+                "mean_log2_ratio": row.get("mean_log2_ratio", "NA"),
+                "mean_z":          row.get("mean_z",          "NA"),
+                "mean_mad_z":      row.get("mean_mad_z",      "NA"),
+                "n_bins":          row.get("n_bins",          "NA"),
+            })
+
+    if skipped:
+        return None
+
+    # Read QC metrics TSV
+    # columns: #metric  value
+    qc_metrics = {}
+    if os.path.isfile(qc_path):
+        with open(qc_path) as f:
+            for line in f:
+                line = line.rstrip()
+                if line.startswith("#") or not line:
+                    continue
+                parts = line.split("\t", 1)
+                if len(parts) == 2:
+                    qc_metrics[parts[0]] = parts[1]
+
+    # Figure paths (relative to analysisdir/sample_name for portal use)
+    def _fig(suffix):
+        full = f"{gxcnv2_dir}/{composite_id}_{suffix}.png"
+        rel  = f"gxcnv2/{composite_id}_{suffix}.png"
+        return rel if os.path.isfile(full) and os.path.getsize(full) > 0 else None
+
+    return {
+        "group":      group,
+        "n_calls":    len(calls),
+        "calls":      calls,
+        "qc_metrics": qc_metrics,
+        "figures": {
+            "genome": _fig("genome"),
+            "qc":     _fig("qc"),
+        },
+    }
+
+
+def read_gxcnv2_all_groups(analysis_dir, sample_name):
+    """Read gxcnv2 results for orig, fetus, mom. Returns dict keyed by group."""
+    result = {}
+    for grp in ("orig", "fetus", "mom"):
+        data = read_gxcnv2_group(analysis_dir, sample_name, grp)
+        if data is not None:
+            result[grp] = data
+    return result or None
+
+
 def read_gxcnv_comparison(analysis_dir, sample_name):
     """
-    Read gx-cnv vs WCX concordance summary from cnv_comparison.tsv.
+    Read gx-cnv vs WCX concordance summary + per-region calls + figure paths.
 
-    Returns a summary dict with n_high_risk, n_concordant, discordant_regions,
-    or None if the file does not exist (gx-cnv was disabled / no reference).
+    Returns a dict with:
+      n_high_risk, n_concordant, discordant_regions  — concordance summary
+      calls          — list of HIGH_RISK region dicts (with track scores)
+      regions_detail — all monitored regions with gxcnv scores
+      figures        — dict of relative paths to genome/regions/qc PNG files
+    or None if gxcnv was disabled / comparison file not found.
     """
-    tsv_path = f"{analysis_dir}/{sample_name}/gxcnv/{sample_name}.cnv_comparison.tsv"
+    gxcnv_dir = f"{analysis_dir}/{sample_name}/gxcnv"
+    tsv_path  = f"{gxcnv_dir}/{sample_name}.cnv_comparison.tsv"
     if not os.path.isfile(tsv_path):
         return None
     try:
-        n_high_risk = 0
+        n_high_risk  = 0
         n_concordant = 0
-        n_wcx_only = 0
+        n_wcx_only   = 0
         n_gxcnv_only = 0
-        discordant = []
+        discordant   = []
+        calls        = []
+        regions_all  = []
+
         with open(tsv_path) as fh:
+            header = None
             for line in fh:
-                if line.startswith("#") or not line.strip():
-                    # Parse summary from meta-header lines
-                    if line.startswith("## n_concordant="):
-                        n_concordant = int(line.split("=")[1].strip())
-                    elif line.startswith("## n_gxcnv_only="):
-                        n_gxcnv_only = int(line.split("=")[1].strip())
-                    elif line.startswith("## n_wcx_only="):
-                        n_wcx_only = int(line.split("=")[1].strip())
+                line = line.rstrip()
+                if not line:
                     continue
-                parts = line.strip().split("\t")
-                if len(parts) >= 5 and parts[2] == "HIGH_RISK":
-                    n_high_risk += 1
-                if len(parts) >= 5 and parts[4] == "DISCORDANT":
-                    discordant.append(parts[1])
+                if line.startswith("## n_concordant="):
+                    n_concordant = int(line.split("=")[1])
+                elif line.startswith("## n_gxcnv_only="):
+                    n_gxcnv_only = int(line.split("=")[1])
+                elif line.startswith("## n_wcx_only="):
+                    n_wcx_only = int(line.split("=")[1])
+                elif line.startswith("#"):
+                    # column header row (starts with single #)
+                    header = line.lstrip("#").strip().split("\t")
+                    continue
+                else:
+                    parts = line.split("\t")
+                    if header and len(parts) >= len(header):
+                        row = dict(zip(header, parts))
+                        region_info = {
+                            "region":      row.get("region", ""),
+                            "gxcnv_call":  row.get("gxcnv_call", ""),
+                            "wcx_call":    row.get("wcx_call", ""),
+                            "concordance": row.get("concordance", ""),
+                            "track_a_z":   row.get("gxcnv_track_a_z", "NA"),
+                            "track_b_p":   row.get("gxcnv_track_b_p", "NA"),
+                            "risk_pct":    row.get("gxcnv_risk_pct",  "NA"),
+                        }
+                        regions_all.append(region_info)
+                        if row.get("gxcnv_call") == "HIGH_RISK":
+                            n_high_risk += 1
+                            calls.append(region_info)
+                        if row.get("concordance") == "DISCORDANT":
+                            discordant.append(row.get("region", ""))
+
+        # Figure paths (relative to analysisdir/sample_name for portal use)
+        def _fig(name):
+            full = f"{gxcnv_dir}/{sample_name}_{name}.png"
+            rel  = f"gxcnv/{sample_name}_{name}.png"
+            return rel if os.path.isfile(full) else None
+
+        figures = {
+            "genome":  _fig("genome"),
+            "regions": _fig("regions"),
+            "qc":      _fig("qc"),
+        }
+
         return {
-            "n_high_risk":     n_high_risk,
-            "n_concordant":    n_concordant,
-            "n_gxcnv_only":   n_gxcnv_only,
-            "n_wcx_only":     n_wcx_only,
+            "n_high_risk":        n_high_risk,
+            "n_concordant":       n_concordant,
+            "n_gxcnv_only":      n_gxcnv_only,
+            "n_wcx_only":        n_wcx_only,
             "discordant_regions": discordant,
+            "calls":              calls,
+            "regions_detail":     regions_all,
+            "figures":            figures,
         }
     except Exception as e:
         logger.warning(f"[gxCNV] Could not read cnv_comparison.tsv: {e}")
@@ -417,8 +661,12 @@ def build_final_results_table(analysis_dir, sample_name):
     # 2b. Read gx-FF ensemble result (optional — only present when model provided)
     gxff_data = read_gxff_ensemble(analysis_dir, sample_name)
 
-    # 2c. Read gx-cnv vs WCX concordance (optional — only present when reference provided)
-    gxcnv_data = read_gxcnv_comparison(analysis_dir, sample_name)
+    # 2c. Read gx-cnv per-group results (orig/fetus/mom) and cross-check vs WCX
+    gxcnv_data       = read_gxcnv_comparison(analysis_dir, sample_name)   # WCX concordance (orig only)
+    gxcnv_per_group  = read_gxcnv_all_groups(analysis_dir, sample_name)   # per-group calls + figures
+
+    # 2d. Read gxcnv2 per-group results (orig/fetus/mom)
+    gxcnv2_per_group = read_gxcnv2_all_groups(analysis_dir, sample_name)
 
     # 3. Read sample bias QC
     sample_bias_file = f"{analysis_dir}/{sample_name}/Output_PRIZM/orig/{sample_name}.of_orig.prizm.qc.txt"
@@ -475,15 +723,19 @@ def build_final_results_table(analysis_dir, sample_name):
         "fetus": fetus_results,
         "mom": mom_results,
         "fetal_gender": ff_gender_data["gender"],
-        # 250610 : fetal_fraction_yff is set to "N/A" for gender Female
+        # fetal_fraction_yff is N/A for Female (Y-chromosome signal unavailable)
         "fetal_fraction_yff": "N/A"
         if ff_gender_data["gender"] == "Female"
         else ff_gender_data["yff"],
-        "fetal_fraction_seqff": ff_gender_data["seqff"],
+        "fetal_fraction_seqff": ff_gender_data["seqff"],  # M-SeqFF (used for Female QC)
+        "fetal_fraction_final": ff_gender_data["final_ff"],  # gender-based final FF (YFF_2 for Male, M-SeqFF for Female)
+        "ff_source": ff_gender_data["ff_source"],
         "ff_ratio": ff_gender_data["ff_ratio"],
         "sample_bias_qc": sample_bias,
-        "gxff": gxff_data,      # None when gx-FF was disabled
-        "gxcnv": gxcnv_data,    # None when gx-cnv was disabled
+        "gxff": gxff_data,            # None when gx-FF was disabled
+        "gxcnv": gxcnv_data,          # WCX cross-check summary (orig); None when disabled
+        "gxcnv_groups": gxcnv_per_group,   # per-group (orig/fetus/mom) calls + figures
+        "gxcnv2_groups": gxcnv2_per_group, # per-group gxcnv2 calls + figures + QC metrics
     }
 
 
@@ -1435,31 +1687,68 @@ def build_nipt_json(
     if final_results:
         _fr: dict = {
             "order_id": sample_name,
-            "fetal_fraction_yff": f"{final_results['fetal_fraction_yff']}",
+            "fetal_fraction_yff":   f"{final_results['fetal_fraction_yff']}",
             "fetal_fraction_seqff": f"{final_results['fetal_fraction_seqff']}",
-            "ff_ratio": str(final_results["ff_ratio"]),
+            # ff_final: gender-based authoritative FF from GENDER_DECISION
+            #   Male   → YFF_2,    Female → M-SeqFF
+            "fetal_fraction_ff_final": f"{final_results.get('fetal_fraction_final', 'N/A')}",
+            "ff_source":  final_results.get("ff_source", "N/A"),
+            "ff_ratio":   str(final_results["ff_ratio"]),
             "fetal_gender": final_results["fetal_gender"],
         }
-        # gx-FF comparison fields (present only when model was provided)
+        # gx-FF reference fields (informational — not used for clinical FF decision)
         if final_results.get("gxff"):
             gxff = final_results["gxff"]
-            _fr["fetal_fraction_gxff"]  = gxff.get("ff_gxff",   "N/A")
-            _fr["fetal_fraction_ff_final"] = gxff.get("ff_final", "N/A")
-            _fr["ff_method"]            = gxff.get("ff_method", "seqff_only")
+            _fr["fetal_fraction_gxff"] = gxff.get("ff_gxff",  "N/A")
+            _fr["ff_gxff_ensemble"]    = gxff.get("ff_final",  "N/A")  # 0.6*gxFF+0.4*rawSeqFF (reference only)
+            _fr["ff_gxff_method"]      = gxff.get("ff_method", "N/A")
+            _fr["ff_lgbm"]             = gxff.get("ff_lgbm",   "N/A")
+            _fr["ff_dnn"]              = gxff.get("ff_dnn",    "N/A")
         else:
-            _fr["fetal_fraction_gxff"]     = "N/A"
-            _fr["fetal_fraction_ff_final"] = "N/A"
-            _fr["ff_method"]               = "seqff_only"
-        # gx-cnv comparison fields (present only when reference was provided)
-        if final_results.get("gxcnv"):
-            gxcnv = final_results["gxcnv"]
-            _fr["gxcnv_high_risk_regions"]  = gxcnv.get("n_high_risk",  0)
-            _fr["gxcnv_wcx_concordant"]     = gxcnv.get("n_concordant", "N/A")
-            _fr["gxcnv_discordant_regions"] = gxcnv.get("discordant_regions", [])
-        else:
-            _fr["gxcnv_high_risk_regions"]  = "N/A"
-            _fr["gxcnv_wcx_concordant"]     = "N/A"
-            _fr["gxcnv_discordant_regions"] = "N/A"
+            _fr["fetal_fraction_gxff"] = "N/A"
+            _fr["ff_gxff_ensemble"]    = "N/A"
+            _fr["ff_gxff_method"]      = "N/A"
+            _fr["ff_lgbm"]             = "N/A"
+            _fr["ff_dnn"]              = "N/A"
+        # gx-cnv per-group results (portal-facing)
+        gxcnv_grps = final_results.get("gxcnv_groups") or {}
+        _fr["gxcnv_results"] = {}
+        for grp in ("orig", "fetus", "mom"):
+            gdata = gxcnv_grps.get(grp)
+            if gdata:
+                _fr["gxcnv_results"][grp] = {
+                    "n_high_risk":    gdata.get("n_high_risk", 0),
+                    "calls":          gdata.get("calls", []),
+                    "regions_detail": gdata.get("regions_detail", []),
+                    "figures":        gdata.get("figures", {}),
+                }
+            else:
+                _fr["gxcnv_results"][grp] = None
+
+        # gxcnv2 per-group results (portal-facing)
+        gxcnv2_grps = final_results.get("gxcnv2_groups") or {}
+        _fr["gxcnv2_results"] = {}
+        for grp in ("orig", "fetus", "mom"):
+            g2data = gxcnv2_grps.get(grp)
+            if g2data:
+                _fr["gxcnv2_results"][grp] = {
+                    "n_calls":    g2data.get("n_calls", 0),
+                    "calls":      g2data.get("calls", []),
+                    "qc_metrics": g2data.get("qc_metrics", {}),
+                    "figures":    g2data.get("figures", {}),
+                }
+            else:
+                _fr["gxcnv2_results"][grp] = None
+
+        # WCX cross-check (internal — not shown in portal UI)
+        gxcnv_xchk = final_results.get("gxcnv") or {}
+        _fr["wcx_internal"] = {
+            "_display": False,   # portal should hide this section
+            "n_concordant":       gxcnv_xchk.get("n_concordant",    "N/A"),
+            "n_wcx_only":         gxcnv_xchk.get("n_wcx_only",      "N/A"),
+            "n_gxcnv_only":       gxcnv_xchk.get("n_gxcnv_only",    "N/A"),
+            "discordant_regions": gxcnv_xchk.get("discordant_regions", []),
+        }
         output[APPID]["final_results"] = _fr
 
     # 2. Read trisomy results
@@ -1850,6 +2139,22 @@ def build_nipt_json(
             seqff_val = round(float(final_results["fetal_fraction_seqff"]), 3)
             seqff_status = "PASS" if seqff_val >= seqff_threshold else "FAIL"
 
+            # gx-FF value (informational only — not used for QC pass/fail)
+            gxff_data = final_results.get("gxff") or {}
+            gxff_display = gxff_data.get("ff_gxff", "N/A")
+            try:
+                gxff_display_val = round(float(gxff_display), 3)
+            except (ValueError, TypeError):
+                gxff_display_val = "N/A"
+
+            # Gender-based final FF from GENDER_DECISION (Male→YFF_2, Female→M-SeqFF)
+            ff_final_display = final_results.get("fetal_fraction_final", "N/A")
+            ff_source_display = final_results.get("ff_source", "N/A")
+            try:
+                ff_final_display_val = round(float(ff_final_display), 3)
+            except (ValueError, TypeError):
+                ff_final_display_val = "N/A"
+
             # Apply FF threshold based on gender
             # Male: Use YFF for QC (SeqFF is not reliable for males)
             # Female: Use SeqFF for QC (YFF is N/A for females)
@@ -1891,6 +2196,19 @@ def build_nipt_json(
                     "unit": "%",
                     "status": seqff_status,
                     "threshold": f">{seqff_threshold}%",
+                },
+                "fetal_fraction_gxff": {
+                    "value": gxff_display_val,
+                    "unit": "%",
+                    "status": "INFO",
+                    "threshold": "N/A",
+                },
+                "fetal_fraction_ff_final": {
+                    "value": ff_final_display_val,
+                    "unit": "%",
+                    "status": "INFO",
+                    "threshold": "N/A",
+                    "source": ff_source_display,  # YFF2 (Male) or M-SeqFF (Female)
                 },
                 "ff_ratio": {
                     "value": ff_ratio_val,

@@ -3,6 +3,7 @@
 .nextflow.log*
 work/
 results/
+tmp/
 
 # Pipeline runtime directories (generated data — never committed)
 analysis/

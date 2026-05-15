@@ -50,6 +50,8 @@ FORCE="false"
 FRESH="false"
 GXFF_MODEL=""
 RUN_GXCNV="false"
+RUN_GXCNV2="true"          # gxcnv2 enabled by default (matches main.nf default)
+GXCNV2_ZSCORE=""           # empty = use main.nf default (3.5)
 RUN_WCX="true"
 
 # SSD scratch
@@ -90,6 +92,8 @@ Optional:
   --run-gxcnv                Enable gx-cnv parallel CNV track
                              Reference auto-resolved by gender:
                                <ref-dir>/labs/<labcode>/GXCNV/{female|male}/reference.npz
+  --no-gxcnv2                Disable gxcnv2 (enabled by default)
+  --gxcnv2-zscore <float>    Z-score threshold for gxcnv2 calling (default: 3.5)
   --no-wcx                   Disable WisecondorX (once gx-cnv is validated)
   --use-ssd                  Enable SSD scratch (Strategy B)
   --scratch-dir <path>       SSD mount point (default: /tmp/nipt_scratch)
@@ -132,6 +136,8 @@ while [[ $# -gt 0 ]]; do
         --gxcnv-reference|--gxcnv-model)
                              echo "[run_nipt] --gxcnv-reference is deprecated; use --run-gxcnv (reference auto-resolved by gender)" >&2
                              RUN_GXCNV="true"; shift 2 ;;
+        --no-gxcnv2)         RUN_GXCNV2="false"; shift ;;
+        --gxcnv2-zscore)     GXCNV2_ZSCORE="$2"; shift 2 ;;
         --no-wcx)            RUN_WCX="false"; shift ;;
         --use-ssd)           USE_SSD="true"; shift ;;
         --scratch-dir)       SCRATCH_DIR="$2"; shift 2 ;;
@@ -322,8 +328,10 @@ if [[ -n "$FASTQ_R1_NAME" ]]; then NF_ARGS+=( --fastq_r1 "$FASTQ_R1_NAME" --fast
 if [[ "$ALGORITHM_ONLY" == "true" ]]; then NF_ARGS+=( --algorithm_only true ); fi
 if [[ "$FORCE" == "true" ]];          then NF_ARGS+=( --force true ); fi
 if [[ -n "$GXFF_MODEL" ]];       then NF_ARGS+=( --gxff_model "$GXFF_MODEL" ); fi
-if [[ "$RUN_GXCNV" == "true" ]]; then NF_ARGS+=( --run_gxcnv true ); fi
-if [[ "$RUN_WCX" == "false" ]];  then NF_ARGS+=( --run_wcx false ); fi
+if [[ "$RUN_GXCNV" == "true" ]];  then NF_ARGS+=( --run_gxcnv true ); fi
+if [[ "$RUN_GXCNV2" == "false" ]]; then NF_ARGS+=( --run_gxcnv2 false ); fi
+if [[ -n "$GXCNV2_ZSCORE" ]];     then NF_ARGS+=( --gxcnv2_zscore "$GXCNV2_ZSCORE" ); fi
+if [[ "$RUN_WCX" == "false" ]];   then NF_ARGS+=( --run_wcx false ); fi
 if [[ -n "$REF_DIR" ]];          then NF_ARGS+=( --ref_dir "$REF_DIR" ); fi
 
 # -----------------------------------------------------------
@@ -423,14 +431,15 @@ echo "[run_nipt] Copied result JSON -> ${HOST_OUTPUT_DIR}/${ORDER_ID}.json"
 TAR_FILE="${HOST_OUTPUT_DIR}/${ORDER_ID}.output.tar"
 (
     cd "$HOST_OUTPUT_DIR"
-    # Collect Output_* subdirs + top-level JSON/HTML
+    # Collect Output_* subdirs + algorithm result dirs + top-level JSON
     TAR_ITEMS=()
     while IFS= read -r -d '' dir; do
         TAR_ITEMS+=( "$(basename "$dir")" )
     done < <(find . -maxdepth 1 -type d -name 'Output_*' -print0 2>/dev/null || true)
-    # Always include the JSON; include review HTML if present.
+    # Include gxcnv2 results directory if present
+    [[ -d "gxcnv2" ]] && TAR_ITEMS+=( "gxcnv2" )
+    # Always include the JSON; HTML is under Output_Result/
     [[ -f "${ORDER_ID}.json" ]] && TAR_ITEMS+=( "${ORDER_ID}.json" )
-    [[ -f "Output_Result/${SAMPLE_NAME}.review.html" ]] && true  # already under Output_Result/
     if (( ${#TAR_ITEMS[@]} == 0 )); then
         echo "[run_nipt] WARNING: no Output_* dirs to archive" >&2
     else

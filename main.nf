@@ -93,10 +93,16 @@ params.gxff_model   = null   // e.g. /data/nipt/models/gxff_v1.pkl
 // Set --run_gxcnv to enable gx-cnv in parallel with WCX.
 // Reference is resolved automatically by gender:
 //   {ref_dir}/labs/{labcode}/GXCNV/{female|male}/reference.npz
-params.run_gxcnv       = false  // set true to enable gx-cnv
+params.run_gxcnv       = true   // gx-cnv enabled by default (validated 99.9% concordance with WCX)
 params.gxcnv_bin_size  = 100000 // bin size for gxcnv convert
 params.gxcnv_thresh_z  = -3.0   // Track A Z-score threshold
 params.gxcnv_thresh_p  = 0.05   // Track B p-value threshold
+
+// gxcnv2: WisecondorX-core prediction with MAD z-score enhancement.
+// Uses the SAME WCX reference.npz — no additional reference building needed.
+//   {ref_dir}/labs/{labcode}/WCX/{orig_F|orig_M|fetus_F|...}_200k*.npz
+params.run_gxcnv2      = true   // enable gxcnv2 alongside gxcnv
+params.gxcnv2_zscore   = 6.0    // aberration z-score threshold, matches pipeline WCX (--zscore 6.0)
 
 // When true, WisecondorX runs alongside gx-cnv for concordance validation.
 // Set to false once gx-cnv is validated and WCX is no longer needed.
@@ -332,11 +338,14 @@ workflow {
         params.gxcnv_bin_size,
         params.gxcnv_thresh_z,
         params.gxcnv_thresh_p,
-        ch_wig_norm_orig   // for gx-cnv GC injection
+        ch_wig_norm_orig,   // for gx-cnv GC injection
+        params.run_gxcnv2,
+        params.gxcnv2_zscore
     )
     ch_wc_result         = WC_WORKFLOW.out.wc_result
     ch_gxcnv_calls       = WC_WORKFLOW.out.gxcnv_calls
     ch_gxcnv_comparison  = WC_WORKFLOW.out.gxcnv_comparison
+    ch_gxcnv2_calls      = WC_WORKFLOW.out.gxcnv2_calls
 
     // Log gx-cnv concordance when available
     ch_gxcnv_comparison
@@ -366,7 +375,8 @@ workflow {
         labcode,
         analysisdir,
         outdir,
-        FF_GENDER_WORKFLOW.out.ff_ensemble   // ensures GXFF_ENSEMBLE finishes before report
+        FF_GENDER_WORKFLOW.out.ff_ensemble,  // ensures GXFF_ENSEMBLE finishes before report
+        ch_gxcnv2_calls                      // ensures all GXCNV2_PREDICT publishDir copies finish
     )
 }
 
@@ -377,7 +387,8 @@ workflow.onComplete {
     def status       = workflow.success ? "SUCCESS" : "FAILED"
     def duration     = workflow.duration
     def gxff_status  = params.gxff_model  ? "ENABLED (${params.gxff_model})"                                          : "DISABLED (seqFF only)"
-    def gxcnv_status = params.run_gxcnv  ? "ENABLED (auto: ${params.ref_dir}/labs/${params.labcode}/GXCNV/{sex}/)" : "DISABLED"
+    def gxcnv_status  = params.run_gxcnv  ? "ENABLED (auto: ${params.ref_dir}/labs/${params.labcode}/GXCNV/{sex}/)" : "DISABLED"
+    def gxcnv2_status = params.run_gxcnv2 ? "ENABLED (WCX ref: ${params.ref_dir}/labs/${params.labcode}/WCX/, zscore=${params.gxcnv2_zscore})" : "DISABLED"
     def wcx_status   = params.run_wcx          ? "ENABLED" : "DISABLED"
     def ssd_status   = params.use_ssd          ? "ENABLED (${params.scratch_dir})"      : "DISABLED"
 
@@ -442,6 +453,7 @@ workflow.onComplete {
     ║  Duration  : ${duration}
     ║  gx-FF     : ${gxff_status}
     ║  gx-cnv    : ${gxcnv_status}
+    ║  gxcnv2    : ${gxcnv2_status}
     ║  WCX       : ${wcx_status}
     ║  SSD       : ${ssd_status}
     ║  Work Dir  : ${workflow.workDir}

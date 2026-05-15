@@ -5,7 +5,7 @@
  *  CNV detection stack (parallel execution per group):
  *    WC   – Wisecondor    (orig / fetus / mom)
  *    WCX  – WisecondorX   (orig / fetus / mom, gender-aware)
- *    gx-cnv – Hybrid dual-track (orig BAM only, genome-wide)
+ *    gx-cnv – Hybrid dual-track (orig / fetus / mom when refs available)
  *
  *  Inputs:
  *    bam_trio    – tuple emitted by SAMTOOLS_SPLIT_FETUS_MOM
@@ -26,6 +26,10 @@ include { GXCNV_CONVERT }     from '../modules/gxcnv'
 include { GXCNV_GC_INJECT }   from '../modules/gxcnv'
 include { GXCNV_PREDICT }     from '../modules/gxcnv'
 include { GXCNV_COMPARE }     from '../modules/gxcnv'
+include { GXCNV_PLOT }        from '../modules/gxcnv'
+include { GXCNV2_CONVERT }    from '../modules/gxcnv2'
+include { GXCNV2_PREDICT }    from '../modules/gxcnv2'
+include { GXCNV2_PLOT }       from '../modules/gxcnv2'
 
 workflow WC_WORKFLOW {
     take:
@@ -39,6 +43,8 @@ workflow WC_WORKFLOW {
         gxcnv_thresh_z   // val: Track A Z-score threshold (default: -3.0)
         gxcnv_thresh_p   // val: Track B p-value threshold (default: 0.05)
         wig_norm_orig    // path: HMMcopy 50kb normalization (orig group) for GC injection
+        run_gxcnv2       // val: boolean — enable gxcnv2 (WCX-core, uses same WCX reference)
+        gxcnv2_zscore    // val: Z-score threshold for gxcnv2 aberration calling (default: 6.0)
 
     main:
         // ── Flatten trio → per-group (sample, group, bam, bai) tuples ──
@@ -72,49 +78,100 @@ workflow WC_WORKFLOW {
             ch_wcx_result = RUN_WCX.out.wcx_result
         }
 
-        // ── gx-cnv (orig BAM only, validation mode) ─────────────────────
-        // Reference is gender-aware: ref_dir/labs/{labcode}/GXCNV/{female|male}/reference.npz
+        // ── gx-cnv (orig / fetus / mom, mirroring WCX) ──────────────────
+        // Reference layout:
+        //   {ref_dir}/labs/{labcode}/GXCNV/{female|male}/reference.npz          ← orig
+        //   {ref_dir}/labs/{labcode}/GXCNV/{female|male}_fetus/reference.npz    ← fetus (optional)
+        //   {ref_dir}/labs/{labcode}/GXCNV/{female|male}_mom/reference.npz      ← mom   (optional)
+        // If a group-specific reference does not exist the process will print a
+        // warning and exit 0 with empty output, so the downstream join is safe.
         ch_gxcnv_calls      = Channel.empty()
         ch_gxcnv_comparison = Channel.empty()
 
         if ( run_gxcnv ) {
-            // gxcnv operates on the maternal-plasma (orig) BAM
-            ch_bam_orig = bam_trio.map { t -> tuple(t[0], t[1], t[2]) }
+            // Build per-group BAM channels exactly like WCX
+            ch_bam_all_groups = bam_trio.flatMap { t ->
+                [
+                    tuple(t[0], 'orig',  t[1], t[2]),
+                    tuple(t[0], 'fetus', t[3], t[4]),
+                    tuple(t[0], 'mom',   t[5], t[6]),
+                ]
+            }
 
-            // Step 1: BAM → NPZ (GC fractions will be NaN at this point)
+            // Step 1: BAM → NPZ for all groups
             GXCNV_CONVERT(
-                ch_bam_orig,
+                ch_bam_all_groups.map { sid, grp, bam, bai -> tuple("${sid}_${grp}", bam, bai) },
                 gxcnv_bin_size,
-                file('NO_FILE')   // optional blacklist BED — not used by default
+                file('NO_FILE')
             )
 
-            // Step 1b: Inject GC fractions from HMMcopy WIG + re-apply GC correction
-            // The reference panel was built with GC-corrected NPZ files; without this
-            // step the sample Z-scores are systematically biased.
+            // Step 1b: GC inject (use orig WIG for all groups — same genome binning)
             GXCNV_GC_INJECT(
                 GXCNV_CONVERT.out.npz,
                 wig_norm_orig
             )
 
+            // Restore (sample_id, group) structure from the composite key
+            ch_gc_npz_by_group = GXCNV_GC_INJECT.out.npz
+                .map { composite_id, npz ->
+                    def parts = composite_id.toString().tokenize('_')
+                    def grp   = parts[-1]            // orig / fetus / mom
+                    def sid   = parts[0..-2].join('_')
+                    tuple(sid, grp, npz)
+                }
+
             GXCNV_PREDICT(
-                GXCNV_GC_INJECT.out.npz,
-                gender_txt,       // parsed in process script to select female/male reference
+                ch_gc_npz_by_group.map { sid, grp, npz -> tuple("${sid}_${grp}", npz) },
+                gender_txt,
                 labcode,
                 gxcnv_thresh_z,
                 gxcnv_thresh_p,
-                Channel.value('NA'),  // FF passed as placeholder (FF join TODO)
+                Channel.value('NA'),
                 analysisdir
             )
-            ch_gxcnv_calls = GXCNV_PREDICT.out.calls_tsv
 
-            // Compare against WCX orig track (if WCX enabled)
+            // Emit calls keyed back to (sample_id, group) for downstream join
+            ch_gxcnv_calls = GXCNV_PREDICT.out.calls_tsv
+                .map { composite_id, calls ->
+                    def parts = composite_id.toString().tokenize('_')
+                    def grp   = parts[-1]
+                    def sid   = parts[0..-2].join('_')
+                    tuple(sid, grp, calls)
+                }
+
+            // Step 5: Plot — genome-wide + per-chromosome figures
+            ch_plot_input = GXCNV_PREDICT.out.bins_tsv
+                .join( GXCNV_PREDICT.out.calls_tsv )
+            GXCNV_PLOT( ch_plot_input, analysisdir )
+
+            // Cross-check against WCX orig track (internal validation)
             if ( params.run_wcx ) {
                 ch_wcx_orig = ch_wcx_result
                     .filter { sid, grp, p -> grp == 'orig' }
                     .map    { sid, grp, p -> tuple(sid, p) }
 
-                ch_compare_input = GXCNV_PREDICT.out.calls_tsv
-                    .join( GXCNV_PREDICT.out.regions_tsv )
+                ch_gxcnv_orig_calls = GXCNV_PREDICT.out.calls_tsv
+                    .map { composite_id, calls ->
+                        def parts = composite_id.toString().tokenize('_')
+                        def grp   = parts[-1]
+                        def sid   = parts[0..-2].join('_')
+                        tuple(sid, grp, calls)
+                    }
+                    .filter { sid, grp, calls -> grp == 'orig' }
+                    .map    { sid, grp, calls -> tuple(sid, calls) }
+
+                ch_gxcnv_orig_regions = GXCNV_PREDICT.out.regions_tsv
+                    .map { composite_id, regions ->
+                        def parts = composite_id.toString().tokenize('_')
+                        def grp   = parts[-1]
+                        def sid   = parts[0..-2].join('_')
+                        tuple(sid, grp, regions)
+                    }
+                    .filter { sid, grp, regions -> grp == 'orig' }
+                    .map    { sid, grp, regions -> tuple(sid, regions) }
+
+                ch_compare_input = ch_gxcnv_orig_calls
+                    .join( ch_gxcnv_orig_regions )
                     .join( ch_wcx_orig, remainder: true )
                     .map { sid, calls, regions, aber ->
                         def aber_file = (aber == null) ? file('NO_FILE') : aber
@@ -125,9 +182,54 @@ workflow WC_WORKFLOW {
             }
         }
 
+        // ── gxcnv2 (WCX-core, WCX reference, different visualisation) ────────────
+        // Uses the same WCX reference.npz files — no new reference build needed.
+        // Runs independently of gxcnv; both can be active simultaneously.
+        ch_gxcnv2_calls = Channel.empty()
+
+        if ( run_gxcnv2 ) {
+            ch_bam_all_groups2 = bam_trio.flatMap { t ->
+                [
+                    tuple(t[0], 'orig',  t[1], t[2]),
+                    tuple(t[0], 'fetus', t[3], t[4]),
+                    tuple(t[0], 'mom',   t[5], t[6]),
+                ]
+            }
+
+            // Convert BAM → WCX-format sample NPZ (binsize must match WCX reference)
+            GXCNV2_CONVERT(
+                ch_bam_all_groups2.map { sid, grp, bam, bai -> tuple("${sid}_${grp}", bam, bai) },
+                200000
+            )
+
+            // Predict: WCX normalisation + MAD z-score + CBS → TSV outputs
+            GXCNV2_PREDICT(
+                GXCNV2_CONVERT.out.npz,
+                gender_txt,
+                labcode,
+                gxcnv2_zscore,
+                analysisdir
+            )
+
+            // Collect calls keyed to (sample_id, group)
+            ch_gxcnv2_calls = GXCNV2_PREDICT.out.calls_tsv
+                .map { composite_id, calls ->
+                    def parts = composite_id.toString().tokenize('_')
+                    def grp   = parts[-1]
+                    def sid   = parts[0..-2].join('_')
+                    tuple(sid, grp, calls)
+                }
+
+            // Plot — log2(ratio) style, genome + per-chromosome + KDE QC
+            ch_plot2_input = GXCNV2_PREDICT.out.bins_tsv
+                .join( GXCNV2_PREDICT.out.calls_tsv )
+            GXCNV2_PLOT( ch_plot2_input, analysisdir )
+        }
+
     emit:
         // Each element: (sample, group, result_path) — WC ∪ WCX
         wc_result        = RUN_WC.out.wc_result.mix( ch_wcx_result )
         gxcnv_calls      = ch_gxcnv_calls
         gxcnv_comparison = ch_gxcnv_comparison
+        gxcnv2_calls     = ch_gxcnv2_calls
 }

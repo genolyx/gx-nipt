@@ -191,6 +191,14 @@ RUN /opt/conda/envs/nipt/bin/pip install \
     git+https://github.com/genolyx/gx-FF && \
     /opt/conda/envs/nipt/bin/python -c "import gxff; print('gx-FF installed OK')"
 
+# Apply gx-nipt pipeline patch: parallel feature extraction in train()
+# Replaces the sequential for-loop with ProcessPoolExecutor for ~Nx speedup.
+COPY bin/gxff_patch/pipeline.py /tmp/gxff_pipeline_patch.py
+RUN GXFF_CORE=$(/opt/conda/envs/nipt/bin/python -c \
+      "import os, gxff.core.pipeline as m; print(os.path.dirname(os.path.abspath(m.__file__)))") && \
+    cp /tmp/gxff_pipeline_patch.py "${GXFF_CORE}/pipeline.py" && \
+    echo "gxff pipeline.py patched at ${GXFF_CORE}/pipeline.py"
+
 RUN /opt/conda/envs/nipt/bin/pip install \
     git+https://github.com/genolyx/gx-cnv && \
     /opt/conda/envs/nipt/bin/gxcnv --version
@@ -224,7 +232,7 @@ RUN git clone https://github.com/VUmcCGP/wisecondor.git /opt/wisecondor && \
 # All scripts are placed under /opt/gx-nipt/bin/scripts/ — the single path
 # that every Nextflow module imports.
 # ----------------------------
-ARG CACHE_BREAK=20
+ARG CACHE_BREAK=21
 
 COPY bin/scripts /opt/gx-nipt/bin/scripts
 # Old Wisecondor (Python 2) – used by RUN_WC process for WC-family analysis

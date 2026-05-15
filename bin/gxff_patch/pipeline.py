@@ -1,16 +1,23 @@
 """
 GxFFPipeline: Main orchestrator for feature extraction, model inference,
 and model training.
+
+Patch notes (gx-nipt):
+- Parallel feature extraction in train() via ProcessPoolExecutor
+  (replaces sequential loop; ~Nx speedup where N = threads)
+- Dockerfile copies this file over the installed gxff/core/pipeline.py
 """
 
 from __future__ import annotations
 
 import logging
+import multiprocessing as _mp
 import os
 import pickle
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -25,6 +32,79 @@ from gxff.utils.augmentation import ArtificialSampleAugmentor
 from gxff.validation.qc import QCChecker
 
 logger = logging.getLogger(__name__)
+
+
+# ── Module-level worker (must be picklable for ProcessPoolExecutor) ───────────
+
+def _extract_sample_worker(
+    args: Tuple,
+) -> Tuple[str, Optional[np.ndarray], Optional[float], Optional[float], Optional[str]]:
+    """
+    Worker function for parallel feature extraction.
+
+    Creates fresh extractor instances per process to avoid shared-state issues.
+
+    Returns
+    -------
+    (sample_id, feat, ff_ref, weight, error_msg)
+    feat is None when extraction fails; error_msg is None on success.
+    """
+    config, sample_id, filepath, bam_for_frag, bmi, ga_weeks, ff_ref = args
+
+    try:
+        from gxff.features.coverage import CoverageFeatureExtractor as _CovExt
+        from gxff.features.fragment import FragmentFeatureExtractor as _FragExt
+        from gxff.features.nucleosome import NucleosomeFeatureExtractor as _NucExt
+        from gxff.utils.io import load_bincount_file as _load_bc
+
+        is_bam = filepath.endswith((".bam", ".cram"))
+        bam_input = (
+            bam_for_frag if (bam_for_frag and not is_bam)
+            else (filepath if is_bam else None)
+        )
+        bincount_input = filepath if not is_bam else None
+
+        feature_parts: List[np.ndarray] = []
+
+        if config.use_coverage:
+            cov_ext = _CovExt(config)
+            if bincount_input:
+                df = _load_bc(bincount_input)
+                feature_parts.append(cov_ext.from_dataframe(df))
+            elif bam_input:
+                feature_parts.append(cov_ext.from_bam(bam_input))
+            else:
+                raise ValueError("Either bam_path or bincount_path must be provided.")
+
+        if config.use_fragment:
+            frag_ext = _FragExt(config)
+            if bam_input:
+                feature_parts.append(frag_ext.from_bam(bam_input))
+            else:
+                feature_parts.append(frag_ext.empty_features())
+
+        if config.use_nucleosome:
+            nuc_ext = _NucExt(config)
+            if bam_input:
+                feature_parts.append(nuc_ext.from_bam(bam_input))
+            else:
+                feature_parts.append(nuc_ext.empty_features())
+
+        cov_vec = np.array(
+            [
+                float(bmi) if bmi is not None else np.nan,
+                float(ga_weeks) if ga_weeks is not None else np.nan,
+            ],
+            dtype=np.float64,
+        )
+        feature_parts.append(cov_vec)
+
+        feat = np.concatenate(feature_parts)
+        weight = config.low_ff_weight if float(ff_ref) < 0.05 else 1.0
+        return (sample_id, feat, float(ff_ref), weight, None)
+
+    except Exception as exc:  # noqa: BLE001
+        return (sample_id, None, None, None, str(exc))
 
 
 class PredictionResult:
@@ -322,44 +402,66 @@ class GxFFPipeline:
         n_samples = len(train_df)
         logger.info("Training samples: %d", n_samples)
 
-        # ── Feature extraction ────────────────────────────────────────────────
-        logger.info("Extracting features for all training samples...")
+        # ── Feature extraction (parallel) ─────────────────────────────────────
+        n_workers = max(1, self.config.threads)
+        logger.info(
+            "Extracting features for all training samples (workers=%d)...", n_workers
+        )
         X_list, y_list, weights_list = [], [], []
 
+        # Build worker argument list (skip samples without FF reference)
+        worker_args: List[Tuple] = []
         for _, row in train_df.iterrows():
-            sample_id = row["SAMPLE_ID"]
-            filepath = row["FILEPATH"]
-            ff_ref = row.get("FF_REFERENCE", np.nan)
-            bmi = row.get("BMI", None)
-            ga_weeks = row.get("GA_WEEKS", None)
-            # Optional BAM_PATH column: when FILEPATH is a bincount/wig file,
-            # BAM_PATH provides the corresponding BAM for fragment feature extraction.
+            sample_id  = row["SAMPLE_ID"]
+            filepath   = row["FILEPATH"]
+            ff_ref     = row.get("FF_REFERENCE", np.nan)
+            bmi        = row.get("BMI", None)
+            ga_weeks   = row.get("GA_WEEKS", None)
             bam_for_frag = row.get("BAM_PATH", None)
-            if bam_for_frag is not None and (pd.isna(bam_for_frag) or str(bam_for_frag).strip() == ""):
+            if bam_for_frag is not None and (
+                pd.isna(bam_for_frag) or str(bam_for_frag).strip() == ""
+            ):
                 bam_for_frag = None
-
-            # Skip samples without reference FF (e.g., female fetuses with no SNP-FF)
             if pd.isna(ff_ref):
                 logger.debug("Skipping %s: no reference FF", sample_id)
                 continue
+            bmi_val = float(bmi) if bmi and not pd.isna(bmi) else None
+            ga_val  = int(ga_weeks) if ga_weeks and not pd.isna(ga_weeks) else None
+            worker_args.append(
+                (self.config, sample_id, filepath, bam_for_frag, bmi_val, ga_val, float(ff_ref))
+            )
 
-            try:
-                is_bam = filepath.endswith((".bam", ".cram"))
-                feat = self._extract_features(
-                    bam_path=bam_for_frag if (bam_for_frag and not is_bam) else (filepath if is_bam else None),
-                    bincount_path=filepath if not is_bam else None,
-                    bmi=float(bmi) if bmi and not pd.isna(bmi) else None,
-                    ga_weeks=int(ga_weeks) if ga_weeks and not pd.isna(ga_weeks) else None,
-                )
-                X_list.append(feat)
-                y_list.append(float(ff_ref))
+        n_total = len(worker_args)
+        logger.info("Submitting %d samples to %d workers...", n_total, n_workers)
 
-                # Apply higher weight to low-FF samples
-                w = self.config.low_ff_weight if float(ff_ref) < 0.05 else 1.0
-                weights_list.append(w)
+        # Use 'forkserver' context to avoid OpenBLAS/numpy deadlocks after fork.
+        # (Linux default 'fork' copies parent's BLAS mutex state and can deadlock
+        # when the parent later calls numpy/sklearn/PyTorch after workers exit.)
+        _mp_ctx = _mp.get_context("forkserver")
 
-            except Exception as exc:
-                logger.error("Feature extraction failed for %s: %s", sample_id, exc)
+        # Submit all tasks; use futures dict to preserve submission order for logging
+        completed = 0
+        failed = 0
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=_mp_ctx) as executor:
+            future_to_sid = {
+                executor.submit(_extract_sample_worker, arg): arg[1]
+                for arg in worker_args
+            }
+            for future in as_completed(future_to_sid):
+                completed += 1
+                sid, feat, ff_ref_val, weight, err = future.result()
+                if feat is None:
+                    failed += 1
+                    logger.error("Feature extraction failed for %s: %s", sid, err)
+                else:
+                    X_list.append(feat)
+                    y_list.append(ff_ref_val)
+                    weights_list.append(weight)
+                if completed % 50 == 0 or completed == n_total:
+                    logger.info(
+                        "Feature extraction progress: %d/%d done, %d failed",
+                        completed, n_total, failed,
+                    )
 
         if len(X_list) == 0:
             raise RuntimeError("No valid training samples with reference FF found.")
@@ -381,11 +483,14 @@ class GxFFPipeline:
             logger.info("After augmentation: %d samples", len(y))
 
         # ── Model training ────────────────────────────────────────────────────
+        # n_jobs is forced to 1 here: feature extraction already used
+        # ProcessPoolExecutor (forked workers), and spawning another layer of
+        # child processes inside Docker causes multiprocessing deadlocks.
         logger.info("Training ensemble model...")
         self.model = GxFFEnsemble(
             n_pca_components=self.config.n_pca_components,
             cv_folds=self.config.cv_folds,
-            n_jobs=self.config.threads,
+            n_jobs=1,
         )
         cv_metrics = self.model.fit(X, y, sample_weight=weights)
 

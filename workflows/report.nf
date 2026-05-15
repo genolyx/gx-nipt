@@ -27,6 +27,7 @@ workflow REPORT_WORKFLOW {
         analysisdir      // string
         outdir           // string
         ch_ff_ensemble   // channel: tuple(sample_id, path) — ensures GXFF_ENSEMBLE finishes before report
+        ch_gxcnv2_calls  // channel: tuple(sample, group, path) — ensures gxcnv2 predict finishes before report
 
     main:
         // Normalise per-group tuple channels to plain path channels
@@ -38,12 +39,17 @@ workflow REPORT_WORKFLOW {
         // for GXFF_ENSEMBLE to publish ff_ensemble.tsv before generating JSON.
         ch_ff_ensemble_path = ch_ff_ensemble.map { _sid, p -> p }
 
+        // Strip tuple wrapper from gxcnv2 calls so report waits for all
+        // GXCNV2_PREDICT publishDir copies before generate_json_output.py reads them.
+        ch_gxcnv2_paths = ch_gxcnv2_calls.map { sid, grp, p -> p }
+
         ch_all_results = ch_ezd_paths
             .mix(ch_prizm_paths)
             .mix(ch_ff_result)
             .mix(ch_md_result)
             .mix(ch_qc_result)
             .mix(ch_ff_ensemble_path)
+            .mix(ch_gxcnv2_paths)
             .collect()
 
         GENERATE_JSON(
