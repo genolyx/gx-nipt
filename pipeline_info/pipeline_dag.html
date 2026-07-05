@@ -1,0 +1,341 @@
+<!--
+  ~ Copyright 2013-2024, Seqera Labs
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~     http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+<html>
+<head>
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, maximum-scale=1">
+</head>
+<body>
+<pre class="mermaid" style="text-align: center;">
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#B6ECE2',
+      'primaryTextColor': '#160F26',
+      'primaryBorderColor': '#065647',
+      'lineColor': '#545555',
+      'clusterBkg': '#BABCBD22',
+      'clusterBorder': '#DDDEDE',
+      'fontFamily': 'arial'
+    }
+  }
+}%%
+flowchart TB
+    subgraph " "
+    v0["Channel.fromPath"]
+    v4["sample_name"]
+    v5["analysisdir"]
+    v8["ch_config"]
+    v9["sample_name"]
+    v10["analysisdir"]
+    v14["sample_name"]
+    v15["analysisdir"]
+    v18["res"]
+    v19["analysisdir"]
+    v21["res"]
+    v22["analysisdir"]
+    v24["res"]
+    v25["analysisdir"]
+    v27["res"]
+    v28["analysisdir"]
+    v33["sample_name"]
+    v34["labcode"]
+    v35["analysisdir"]
+    v37["sample_name"]
+    v38["labcode"]
+    v39["analysisdir"]
+    v41["sample_name"]
+    v42["labcode"]
+    v43["analysisdir"]
+    v45["sample_name"]
+    v46["analysisdir"]
+    v50["analysisdir"]
+    v55["sample_name"]
+    v56["analysisdir"]
+    v60["labcode"]
+    v61["analysisdir"]
+    v65["labcode"]
+    v66["analysisdir"]
+    v73["labcode"]
+    v74["analysisdir"]
+    v78["labcode"]
+    v79["analysisdir"]
+    v89["analysisdir"]
+    v96["analysisdir"]
+    v105["analysisdir"]
+    v113["analysisdir"]
+    v122["sample_name"]
+    v123["labcode"]
+    v124["analysisdir"]
+    v137["sample_name"]
+    v138["labcode"]
+    v139["analysisdir"]
+    v141["sample_name"]
+    v142["labcode"]
+    v143["analysisdir"]
+    v145["sample_name"]
+    v146["analysisdir"]
+    v147["outdir"]
+    end
+    subgraph "ALIGN_WORKFLOW [ALIGN_WORKFLOW]"
+    v6(["SAMTOOLS_SPLIT_FETUS_MOM"])
+    v3(( ))
+    end
+    subgraph " "
+    v7[" "]
+    v12[" "]
+    v13[" "]
+    v52[" "]
+    v54["ch_ff_tsv_path"]
+    v63[" "]
+    v64[" "]
+    v68[" "]
+    v69[" "]
+    v70[" "]
+    v71[" "]
+    v81[" "]
+    v82[" "]
+    v91[" "]
+    v92[" "]
+    v93[" "]
+    v98[" "]
+    v99[" "]
+    v100[" "]
+    v107[" "]
+    v108[" "]
+    v109[" "]
+    v111["gxcnv1_calls"]
+    v115[" "]
+    v116[" "]
+    v117[" "]
+    v149[" "]
+    end
+    subgraph "QC_WORKFLOW [QC_WORKFLOW]"
+    v11(["QUALIMAP"])
+    v16(["QC_FILTER"])
+    end
+    subgraph "HMMCOPY_WORKFLOW [HMMCOPY_WORKFLOW]"
+    v20(["READCOUNTER_50K"])
+    v23(["READCOUNTER_10M"])
+    v26(["HMMCOPY_R_50K"])
+    v29(["HMMCOPY_R_10M"])
+    v17(( ))
+    end
+    subgraph "FF_GENDER_WORKFLOW [FF_GENDER_WORKFLOW]"
+    v36(["CALCULATE_YFF"])
+    v40(["CALCULATE_YFF2"])
+    v44(["CALCULATE_SEQFF"])
+    v47(["CALCULATE_FRAGMENT_FF"])
+    v51(["GXFF_ENSEMBLE"])
+    v57(["GENDER_DECISION"])
+    v48(( ))
+    v53(( ))
+    end
+    subgraph "EZD_WORKFLOW [EZD_WORKFLOW]"
+    v62(["RUN_EZD"])
+    end
+    subgraph "PRIZM_WORKFLOW [PRIZM_WORKFLOW]"
+    v67(["RUN_PRIZM"])
+    end
+    subgraph "WC_WORKFLOW [WC_WORKFLOW]"
+    v75(["RUN_WC"])
+    v80(["RUN_WCX"])
+    v90(["GXCNV2_PREDICT"])
+    v97(["GXCNV2_PLOT"])
+    v106(["GXCNV1_PREDICT"])
+    v114(["GXCNV1_PLOT"])
+    v72(( ))
+    v88(( ))
+    v94(( ))
+    v95(( ))
+    v103(( ))
+    v110(( ))
+    v112(( ))
+    v118(( ))
+    end
+    subgraph "MD_WORKFLOW [MD_WORKFLOW]"
+    v125(["RUN_MD_DETECTION"])
+    v120(( ))
+    end
+    subgraph "REPORT_WORKFLOW [REPORT_WORKFLOW]"
+    v140(["GENERATE_JSON"])
+    v144(["GENERATE_HTML"])
+    v148(["COPY_TO_OUTPUT"])
+    v126(( ))
+    end
+    v30(( ))
+    v58(( ))
+    v59(( ))
+    v0 --> v6
+    v0 --> v11
+    v0 --> v36
+    v0 --> v44
+    v0 --> v47
+    v0 --> v3
+    v4 --> v6
+    v5 --> v6
+    v3 --> v6
+    v6 --> v7
+    v6 --> v17
+    v6 --> v72
+    v8 --> v11
+    v8 --> v16
+    v8 --> v36
+    v8 --> v40
+    v8 --> v44
+    v8 --> v47
+    v8 --> v57
+    v8 --> v62
+    v8 --> v67
+    v8 --> v75
+    v8 --> v80
+    v8 --> v125
+    v8 --> v140
+    v8 --> v144
+    v9 --> v11
+    v10 --> v11
+    v11 --> v13
+    v11 --> v16
+    v11 --> v12
+    v14 --> v16
+    v15 --> v16
+    v16 --> v126
+    v18 --> v20
+    v19 --> v20
+    v17 --> v20
+    v20 --> v26
+    v21 --> v23
+    v22 --> v23
+    v17 --> v23
+    v23 --> v29
+    v24 --> v26
+    v25 --> v26
+    v26 --> v62
+    v26 --> v30
+    v27 --> v29
+    v28 --> v29
+    v29 --> v67
+    v33 --> v36
+    v34 --> v36
+    v35 --> v36
+    v3 --> v36
+    v36 --> v57
+    v37 --> v40
+    v38 --> v40
+    v39 --> v40
+    v30 --> v40
+    v40 --> v57
+    v41 --> v44
+    v42 --> v44
+    v43 --> v44
+    v3 --> v44
+    v44 --> v57
+    v44 --> v48
+    v45 --> v47
+    v46 --> v47
+    v3 --> v47
+    v47 --> v57
+    v50 --> v51
+    v48 --> v51
+    v51 --> v52
+    v51 --> v53
+    v51 --> v58
+    v51 --> v126
+    v53 --> v54
+    v55 --> v57
+    v56 --> v57
+    v57 --> v59
+    v57 --> v126
+    v60 --> v62
+    v61 --> v62
+    v62 --> v64
+    v62 --> v63
+    v62 --> v126
+    v65 --> v67
+    v66 --> v67
+    v59 --> v67
+    v67 --> v71
+    v67 --> v70
+    v67 --> v69
+    v67 --> v68
+    v67 --> v126
+    v73 --> v75
+    v74 --> v75
+    v72 --> v75
+    v75 --> v103
+    v75 --> v118
+    v78 --> v80
+    v79 --> v80
+    v59 --> v80
+    v72 --> v80
+    v80 --> v82
+    v80 --> v81
+    v80 --> v88
+    v80 --> v118
+    v89 --> v90
+    v88 --> v90
+    v90 --> v93
+    v90 --> v92
+    v90 --> v91
+    v90 --> v94
+    v90 --> v95
+    v96 --> v97
+    v95 --> v97
+    v97 --> v100
+    v97 --> v99
+    v97 --> v98
+    v105 --> v106
+    v103 --> v106
+    v106 --> v109
+    v106 --> v108
+    v106 --> v107
+    v106 --> v110
+    v106 --> v112
+    v110 --> v111
+    v113 --> v114
+    v112 --> v114
+    v114 --> v117
+    v114 --> v116
+    v114 --> v115
+    v122 --> v125
+    v123 --> v125
+    v124 --> v125
+    v120 --> v125
+    v125 --> v126
+    v137 --> v140
+    v138 --> v140
+    v139 --> v140
+    v126 --> v140
+    v140 --> v144
+    v140 --> v148
+    v141 --> v144
+    v142 --> v144
+    v143 --> v144
+    v144 --> v148
+    v145 --> v148
+    v146 --> v148
+    v147 --> v148
+    v148 --> v149
+    v94 --> v126
+    v118 --> v120
+
+</pre>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, maxTextSize: Number.MAX_SAFE_INTEGER, maxEdges: Number.MAX_SAFE_INTEGER });
+</script>
+</body>
+</html>

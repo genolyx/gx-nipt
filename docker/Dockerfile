@@ -83,7 +83,8 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -
     bash /tmp/miniconda.sh -b -p /opt/conda && rm /tmp/miniconda.sh && \
     conda clean -afy
 
-# .condarc 고정: defaults 완전 제거, strict priority
+# .condarc 고정: defaults 완전 제거, strict priority, libmamba solver
+# conda >= 23.10 has libmamba built-in — no separate plugin install needed
 RUN printf "%s\n" \
 "channels:" \
 "  - conda-forge" \
@@ -91,11 +92,8 @@ RUN printf "%s\n" \
 "channel_priority: strict" \
 "default_channels: []" \
 "show_channel_urls: true" \
+"solver: libmamba" \
 > /root/.condarc && cp /root/.condarc /opt/conda/.condarc || true
-
-# libmamba solver 설치 (conda-forge만 사용)
-RUN conda install -n base -y conda-libmamba-solver --override-channels -c conda-forge && \
-    conda config --set solver libmamba
 
 # ----------------------------
 # Create env (Py 3.11.9) - override channels + repodata.json
@@ -114,6 +112,7 @@ RUN --mount=type=cache,target=/opt/conda/pkgs \
       conda install -y \
         --override-channels -c conda-forge -c bioconda --strict-channel-priority \
         --repodata-fn=repodata.json \
+        pip \
         hmmcopy \
         qualimap \
         r-base=4.4 \

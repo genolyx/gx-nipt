@@ -1,29 +1,30 @@
 /**
- * gxcnv2 Module
+ * gxcnv1 Module
  *
- * WisecondorX-core CNV detection engine, independent of gxcnv.
- * Reuses BED files produced by RUN_WCX — no duplicate predict step needed.
+ * Wisecondor-core CNV detection engine, independent of gxcnv and gxcnv2.
+ * Uses the WC reference.npz files already used by RUN_WC, and reuses
+ * RUN_WC's own out.npz directly — no duplicate test step needed.
  *
- * Algorithm (gxcnv2_predict.py --bins-bed mode):
- *   Reads pre-computed WCX BED files: _bins.bed, _segments.bed, _aberrations.bed
+ * Algorithm (gxcnv1_predict.py):
+ *   Reads wisecondor test out.npz: PCA normalisation + Stouffer z-score (already computed)
  *   Enhancements: MAD-based robust z-score · MAPD metric · log2(ratio) output
  *
- * Visualisation (plot_gxcnv2.py):
+ * Visualisation (plot_gxcnv1.py):
  *   log2(ratio) filled-area genome-wide track · teal/amber/violet palette
- *   KDE QC plot · CBS segment overlay (distinct from gxcnv and WCX visuals)
+ *   KDE QC plot · call segment overlay  (same visual style as gxcnv2)
  *
  * Data flow:
- *   RUN_WCX  →  (bins.bed, segments.bed, aberrations.bed)  →  GXCNV2_PREDICT  →  TSV
- *   GXCNV2_PREDICT  →  (bins.tsv, calls.tsv)  →  GXCNV2_PLOT  →  PNG
+ *   RUN_WC  →  (sample.npz, out.npz)  →  GXCNV1_PREDICT  →  TSV
+ *   GXCNV1_PREDICT  →  (bins.tsv, calls.tsv)  →  GXCNV1_PLOT  →  PNG
  *
- * WCX result = gxcnv2  (identical underlying calls, gxcnv2-style visuals)
+ * WC result = gxcnv1  (identical underlying calls, gxcnv2-style visuals)
  */
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 1: BAM → sample NPZ  (same WisecondorX convert as RUN_WCX)
+// Step 1: BAM → sample NPZ  (same Wisecondor convert as RUN_WC)
 // ─────────────────────────────────────────────────────────────────────────────
-process GXCNV2_CONVERT {
+process GXCNV1_CONVERT {
     tag "${sample_id}"
     label 'process_low'
     label 'nipt_docker'
@@ -33,61 +34,62 @@ process GXCNV2_CONVERT {
     val   binsize   // must match the reference (200000)
 
     output:
-    tuple val(sample_id), path("${sample_id}.gxcnv2.npz"), emit: npz
-    path  "${sample_id}.gxcnv2_convert.log",               emit: log
+    tuple val(sample_id), path("${sample_id}.gxcnv1.npz"), emit: npz
+    path  "${sample_id}.gxcnv1_convert.log",               emit: log
 
     script:
     """
     set -euo pipefail
 
-    export TMPDIR="\${NXF_TASK_WORKDIR}"
+    export LOGNAME="\${LOGNAME:-nipt}"
     export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
 
     READ_COUNT=\$(samtools view -c ${bam})
     if [ "\${READ_COUNT}" -eq 0 ]; then
-        echo "[GXCNV2] ${sample_id} BAM is empty — skipping convert." >&2
-        touch ${sample_id}.gxcnv2.npz
-        touch ${sample_id}.gxcnv2_convert.log
+        echo "[GXCNV1] ${sample_id} BAM is empty — skipping convert." >&2
+        touch ${sample_id}.gxcnv1.npz
+        touch ${sample_id}.gxcnv1_convert.log
         exit 0
     fi
 
-    # WisecondorX convert appends .npz automatically; pass prefix only
-    WisecondorX convert \\
+    # wisecondor.py uses Python2; -binsize uses a single dash
+    python2 /opt/wisecondor/wisecondor.py convert \\
         ${bam} \\
-        ${sample_id}.gxcnv2 \\
-        --binsize ${binsize} \\
-        2>&1 | tee ${sample_id}.gxcnv2_convert.log
+        ${sample_id}.gxcnv1.npz \\
+        -binsize ${binsize} \\
+        2>&1 | tee ${sample_id}.gxcnv1_convert.log
 
-    if [ ! -s "${sample_id}.gxcnv2.npz" ]; then
-        echo "ERROR: WisecondorX convert produced empty NPZ for ${sample_id}" >&2
+    if [ ! -s "${sample_id}.gxcnv1.npz" ]; then
+        echo "ERROR: Wisecondor convert produced empty NPZ for ${sample_id}" >&2
         exit 1
     fi
     """
 
     stub:
     """
-    python3 -c "import numpy as np; np.savez_compressed('${sample_id}.gxcnv2', **{'1': np.zeros(100, dtype='int32')})"
-    touch ${sample_id}.gxcnv2_convert.log
+    python3 -c "import numpy as np; np.savez_compressed('${sample_id}.gxcnv1', sample={})"
+    touch ${sample_id}.gxcnv1_convert.log
     """
 }
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 2: Parse WCX BED files from RUN_WCX into gxcnv2 TSV
-//         Receives pre-computed WCX BED files, no duplicate WCX predict needed.
+// Step 2: Parse out.npz from RUN_WC into gxcnv2-compatible TSV
+//         Receives both sample.npz and out.npz produced by RUN_WC,
+//         so wisecondor.py test is NOT run again here.
 // ─────────────────────────────────────────────────────────────────────────────
-process GXCNV2_PREDICT {
+process GXCNV1_PREDICT {
     tag "${sample_id}"
     label 'process_medium'
     label 'nipt_docker'
 
     publishDir {
         def _parts = sample_id.toString().tokenize('_')
-        "${analysisdir}/${_parts[0..-2].join('_')}/gxcnv2"
+        "${analysisdir}/${_parts[0..-2].join('_')}/gxcnv1"
     }, mode: 'copy', pattern: "*.tsv", overwrite: true
 
     input:
-    tuple val(sample_id), path(bins_bed), path(segs_bed), path(aber_bed)   // from RUN_WCX.out.wcx_beds
+    tuple val(sample_id), path(sample_npz), path(out_npz)   // both from RUN_WC.out
     val   analysisdir
 
     output:
@@ -95,36 +97,36 @@ process GXCNV2_PREDICT {
     tuple val(sample_id), path("${sample_id}_segments.tsv"), emit: segments_tsv
     tuple val(sample_id), path("${sample_id}_calls.tsv"),    emit: calls_tsv
     tuple val(sample_id), path("${sample_id}_qcmetrics.tsv"),emit: qcmetrics_tsv
-    path  "${sample_id}.gxcnv2_predict.log",                 emit: log
+    path  "${sample_id}.gxcnv1_predict.log",                 emit: log
 
     script:
     """
     set -euo pipefail
 
-    export TMPDIR="\${NXF_TASK_WORKDIR}"
+    export LOGNAME="\${LOGNAME:-nipt}"
     export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
 
-    # ── Skip if bins.bed is empty (empty BAM → empty beds from RUN_WCX) ─────────
-    if [ ! -s "${bins_bed}" ]; then
-        echo "[GXCNV2] Empty bins.bed from RUN_WCX — creating stub outputs." >&2
+    # ── Skip if NPZ is empty (empty BAM → empty out.npz from RUN_WC) ───────────
+    if [ ! -s "${sample_npz}" ] || [ ! -s "${out_npz}" ]; then
+        echo "[GXCNV1] Empty NPZ from RUN_WC — creating stub outputs." >&2
         for suffix in bins segments calls qcmetrics; do
             printf "#chrom\\tstart\\tend\\n" > ${sample_id}_\${suffix}.tsv
         done
-        touch ${sample_id}.gxcnv2_predict.log
+        touch ${sample_id}.gxcnv1_predict.log
         exit 0
     fi
 
-    # ── Run gxcnv2 predict in beds mode (reuse RUN_WCX output) ─────────────────
-    python3 /opt/gx-nipt/bin/scripts/gxcnv2_predict.py \\
-        --bins-bed        ${bins_bed} \\
-        --segments-bed    ${segs_bed} \\
-        --aberrations-bed ${aber_bed} \\
-        -o                ${sample_id} \\
-        2>&1 | tee ${sample_id}.gxcnv2_predict.log
+    # ── Parse out.npz → gxcnv2-compatible TSV (Python3) ─────────────────────
+    # out.npz was already produced by RUN_WC (wisecondor test), not re-run here.
+    python3 /opt/gx-nipt/bin/scripts/gxcnv1_predict.py \\
+        ${sample_npz} \\
+        ${out_npz} \\
+        -o ${sample_id} \\
+        2>&1 | tee ${sample_id}.gxcnv1_predict.log
 
     for f in ${sample_id}_bins.tsv ${sample_id}_calls.tsv; do
         if [ ! -f "\$f" ]; then
-            echo "ERROR: gxcnv2 predict missing output: \$f" >&2
+            echo "ERROR: gxcnv1 predict missing output: \$f" >&2
             exit 1
         fi
     done
@@ -135,22 +137,23 @@ process GXCNV2_PREDICT {
     for suffix in bins segments calls qcmetrics; do
         echo -e "#chrom\\tstart\\tend" > ${sample_id}_\${suffix}.tsv
     done
-    touch ${sample_id}.gxcnv2_predict.log
+    touch ${sample_id}.gxcnv1_predict.log
     """
 }
 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 3: Plot — genome-wide + per-chromosome log2(ratio) figures
+//         Same visual style as gxcnv2 (filled-area, teal/amber/violet, KDE QC)
 // ─────────────────────────────────────────────────────────────────────────────
-process GXCNV2_PLOT {
+process GXCNV1_PLOT {
     tag "${sample_id}"
     label 'process_low'
     label 'nipt_docker'
 
     publishDir {
         def _p = sample_id.toString().tokenize('_')
-        "${analysisdir}/${_p[0..-2].join('_')}/gxcnv2"
+        "${analysisdir}/${_p[0..-2].join('_')}/gxcnv1"
     }, mode: 'copy', overwrite: true, pattern: "*.png"
 
     input:
@@ -163,14 +166,12 @@ process GXCNV2_PLOT {
     tuple val(sample_id), path("${sample_id}_chr*.png"),   emit: chr_pngs, optional: true
 
     script:
-    def _p    = sample_id.toString().tokenize('_')
-    def base_id = _p[0..-2].join('_')
     """
     set -euo pipefail
 
     export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
 
-    python3 /opt/gx-nipt/bin/scripts/plot_gxcnv2.py \\
+    python3 /opt/gx-nipt/bin/scripts/plot_gxcnv1.py \\
         --bins  ${bins_tsv} \\
         --calls ${calls_tsv} \\
         -o      ${sample_id}

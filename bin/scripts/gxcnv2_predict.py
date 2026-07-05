@@ -9,16 +9,15 @@ Enhancements added on top:
   • Per-bin log2(ratio) preserved in output
   • Different TSV output schema (separate bins / segments / calls / qcmetrics)
 
-Strategy:
-  1. Run WisecondorX predict internally via subprocess → produces _bins.bed, _segments.bed
-  2. Parse BED outputs and re-annotate with MAD z-score and MAPD
-  3. Write our own gxcnv2 TSV outputs (different schema from both WCX BED and gxcnv TSV)
-  4. Caller (plot_gxcnv2.py) then visualises the TSV with a completely different style
+Two execution modes:
+  NPZ mode (original):
+    Runs WisecondorX predict as a subprocess, produces BED files, then annotates.
+    gxcnv2_predict.py  sample.npz  reference.npz  -o PREFIX  [options]
 
-Reference format: unchanged WisecondorX NPZ — same files used by RUN_WCX.
-
-Usage:
-  gxcnv2_predict.py  sample.npz  reference.npz  -o PREFIX  [options]
+  Beds mode (preferred — reuses RUN_WCX output, avoids duplicate computation):
+    Reads pre-computed WCX BED files produced by RUN_WCX. WC result = gxcnv1, WCX result = gxcnv2.
+    gxcnv2_predict.py  --bins-bed PREFIX_bins.bed  --segments-bed PREFIX_segments.bed
+                       --aberrations-bed PREFIX_aberrations.bed  -o OUTPUT_PREFIX
 """
 
 import argparse
@@ -207,6 +206,38 @@ def load_wcx_aberrations(outid: str) -> pd.DataFrame | None:
     return df
 
 
+# ── Direct-path loaders (beds mode: reuse RUN_WCX output) ────────────────────
+
+def _load_wcx_bed_file(path: str) -> pd.DataFrame | None:
+    """Load any WCX BED file from a direct file path."""
+    df = _parse_bed(path, ["start", "end", "ratio", "zscore"])
+    if df is None:
+        return None
+    rename = {"#chr": "chrom", "chr": "chrom", "zscore": "z_score"}
+    df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+    df = _normalise_chrom(df)
+    df = _ratio_to_log2(df)
+    return df
+
+
+def load_wcx_bins_file(path: str) -> pd.DataFrame | None:
+    """Load WCX _bins.bed from a direct file path (beds mode)."""
+    return _load_wcx_bed_file(path)
+
+
+def load_wcx_segments_file(path: str) -> pd.DataFrame | None:
+    """Load WCX _segments.bed from a direct file path (beds mode)."""
+    return _load_wcx_bed_file(path)
+
+
+def load_wcx_aberrations_file(path: str) -> pd.DataFrame:
+    """Load WCX _aberrations.bed from a direct file path (beds mode)."""
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return pd.DataFrame()
+    df = _load_wcx_bed_file(path)
+    return df if df is not None else pd.DataFrame()
+
+
 # ── Enhancements ───────────────────────────────────────────────────────────────
 
 def add_mad_z(df: pd.DataFrame, col: str = "log2_ratio") -> pd.DataFrame:
@@ -371,50 +402,88 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="gxcnv2 predict — WisecondorX-based CNV calling with MAD z-score & MAPD"
     )
-    p.add_argument("sample_npz",      help="WisecondorX convert output NPZ")
-    p.add_argument("ref_npz",         help="WisecondorX reference NPZ")
+    # NPZ mode (original)
+    p.add_argument("sample_npz", nargs="?", default=None,
+                   help="WisecondorX convert output NPZ (omit when using --bins-bed)")
+    p.add_argument("ref_npz",    nargs="?", default=None,
+                   help="WisecondorX reference NPZ (omit when using --bins-bed)")
     p.add_argument("-o", "--prefix",  required=True, help="Output file prefix")
     p.add_argument("--gender",        default=None, choices=["M", "F"],
-                   help="Force gender (M/F); omit to let WCX auto-detect")
+                   help="Force gender (M/F); omit to let WCX auto-detect (NPZ mode only)")
     p.add_argument("--zscore",        type=float, default=6.0,
-                   help="WCX z-score aberration threshold (default 6.0)")
+                   help="WCX z-score aberration threshold (default 6.0; NPZ mode only)")
     p.add_argument("--alpha",         type=float, default=0.01)
     p.add_argument("--seed",          type=int,   default=100)
     p.add_argument("--maskrepeats",   type=int,   default=5)
     p.add_argument("--minrefbins",    type=int,   default=150)
+    # Beds mode: reuse pre-computed WCX BED files from RUN_WCX
+    p.add_argument("--bins-bed",         default=None,
+                   help="Pre-computed WCX _bins.bed (skips WCX predict subprocess)")
+    p.add_argument("--segments-bed",     default=None,
+                   help="Pre-computed WCX _segments.bed")
+    p.add_argument("--aberrations-bed",  default=None,
+                   help="Pre-computed WCX _aberrations.bed")
     return p.parse_args()
+
+
+def _write_empty_outputs(prefix: str, reason: str) -> None:
+    """Write empty stub TSV files when sample has no usable data."""
+    logger.warning("Writing empty outputs for %s: %s", prefix, reason)
+    for suffix in ("_bins.tsv", "_segments.tsv", "_calls.tsv"):
+        open(f"{prefix}{suffix}", "w").close()
+    write_qcmetrics({"status": reason, "n_bins": 0, "n_calls": 0}, prefix)
 
 
 def main():
     args = parse_args()
-    logger.info("gxcnv2 predict | sample=%s  ref=%s", args.sample_npz, args.ref_npz)
 
-    # Run WCX predict in a temp dir so we can capture the BED outputs
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_outid = os.path.join(tmpdir, "wcx_out")
+    beds_mode = bool(args.bins_bed)
 
-        ok = run_wcx_predict(
-            args.sample_npz, args.ref_npz, tmp_outid,
-            alpha=args.alpha, zscore=args.zscore, seed=args.seed,
-            maskrepeats=args.maskrepeats, minrefbins=args.minrefbins,
-            gender=args.gender,
-        )
-        if not ok:
-            logger.error("WisecondorX predict failed — aborting")
+    if beds_mode:
+        # ── Beds mode: reuse RUN_WCX output (WCX result = gxcnv2) ────────────
+        logger.info("gxcnv2 predict | beds-mode | bins=%s", args.bins_bed)
+        df_bins = load_wcx_bins_file(args.bins_bed)
+        df_segs = load_wcx_segments_file(args.segments_bed) if args.segments_bed else None
+        df_aber = load_wcx_aberrations_file(args.aberrations_bed) if args.aberrations_bed else pd.DataFrame()
+        ref_name = "from_wcx"
+
+        if df_bins is None or df_bins.empty:
+            _write_empty_outputs(args.prefix, "empty_bins_bed")
+            return
+
+    else:
+        # ── NPZ mode: run WCX predict as subprocess (original behaviour) ─────
+        if not args.sample_npz or not args.ref_npz:
+            logger.error("Provide either --bins-bed OR both sample_npz and ref_npz positional args")
+            sys.exit(1)
+        logger.info("gxcnv2 predict | npz-mode | sample=%s  ref=%s", args.sample_npz, args.ref_npz)
+        ref_name = os.path.basename(args.ref_npz)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_outid = os.path.join(tmpdir, "wcx_out")
+
+            ok = run_wcx_predict(
+                args.sample_npz, args.ref_npz, tmp_outid,
+                alpha=args.alpha, zscore=args.zscore, seed=args.seed,
+                maskrepeats=args.maskrepeats, minrefbins=args.minrefbins,
+                gender=args.gender,
+            )
+            if not ok:
+                logger.error("WisecondorX predict failed — aborting")
+                sys.exit(1)
+
+            df_bins = load_wcx_bins(tmp_outid)
+            df_segs = load_wcx_segments(tmp_outid)
+            df_aber = load_wcx_aberrations(tmp_outid)
+
+        if df_bins is None or df_bins.empty:
+            logger.error("No bins output from WisecondorX predict — aborting")
             sys.exit(1)
 
-        df_bins  = load_wcx_bins(tmp_outid)
-        df_segs  = load_wcx_segments(tmp_outid)
-        df_aber  = load_wcx_aberrations(tmp_outid)
-
-    if df_bins is None or df_bins.empty:
-        logger.error("No bins output from WisecondorX predict — aborting")
-        sys.exit(1)
-
-    logger.info("Loaded %d bins, %d segments from WCX",
+    logger.info("Loaded %d bins, %d segments",
                 len(df_bins), len(df_segs) if df_segs is not None else 0)
 
-    # ── Enhancements ──────────────────────────────────────────────────────────
+    # ── Enhancements (shared by both modes) ───────────────────────────────────
     df_bins  = add_mad_z(df_bins, col="log2_ratio")
     mapd     = compute_mapd(df_bins, col="log2_ratio")
 
@@ -424,6 +493,7 @@ def main():
     logger.info("MAPD = %.4f | calls = %d", mapd if not np.isnan(mapd) else -1, len(df_calls))
 
     # ── QC metrics ────────────────────────────────────────────────────────────
+    zscore_thresh = args.zscore if not beds_mode else "from_wcx"
     qc = {
         "n_bins":            len(df_bins),
         "mapd":              f"{mapd:.5g}" if not np.isnan(mapd) else "NA",
@@ -431,8 +501,8 @@ def main():
         "median_z_score":    f"{float(np.nanmedian(df_bins['z_score'])):.5g}" if "z_score" in df_bins.columns else "NA",
         "n_segments":        len(df_segs) if df_segs is not None else 0,
         "n_calls":           len(df_calls),
-        "zscore_threshold":  args.zscore,
-        "reference":         os.path.basename(args.ref_npz),
+        "zscore_threshold":  zscore_thresh,
+        "reference":         ref_name,
     }
 
     # ── Write outputs ─────────────────────────────────────────────────────────

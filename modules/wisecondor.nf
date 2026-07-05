@@ -29,7 +29,12 @@ process RUN_WC {
         tuple val(sample_name), val(group),
               path("${sample_name}.wc.${group}.report.txt"),
               emit: wc_result
-        path "*.npz",                                 emit: npz, optional: true
+        tuple val(sample_name), val(group),
+              path("${sample_name}.wc.${group}.npz"),
+              emit: wc_sample_npz
+        tuple val(sample_name), val(group),
+              path("${sample_name}.wc.${group}.out.npz"),
+              emit: wc_out_npz
 
     script:
         // Actual NPZ naming convention in refs:
@@ -56,6 +61,8 @@ process RUN_WC {
         if [ "\${READ_COUNT}" -eq 0 ]; then
             echo "[WC] ${group} BAM is empty (0 reads) — writing empty report." >&2
             printf "WC\\t${group}\\tSKIPPED (empty BAM)\\n" > ${sample_name}.wc.${group}.report.txt
+            touch ${sample_name}.wc.${group}.npz
+            touch ${sample_name}.wc.${group}.out.npz
             exit 0
         fi
 
@@ -99,6 +106,11 @@ process RUN_WCX {
         tuple val(sample_name), val(group),
               path("${sample_name}.wcx.${group}_aberrations.bed"),
               emit: wcx_result
+        tuple val(sample_name), val(group),
+              path("${sample_name}.wcx.${group}_bins.bed"),
+              path("${sample_name}.wcx.${group}_segments.bed"),
+              path("${sample_name}.wcx.${group}_aberrations.bed"),
+              emit: wcx_beds
         path "${sample_name}.wcx.${group}.plots", emit: plots_dir, optional: true
         path "*.npz",                             emit: npz,      optional: true
 
@@ -145,8 +157,10 @@ process RUN_WCX {
         # Skip WCX gracefully when the BAM has no mapped reads.
         READ_COUNT=\$(samtools view -c ${bam})
         if [ "\${READ_COUNT}" -eq 0 ]; then
-            echo "[WCX] ${group} BAM is empty (0 reads) — writing empty aberrations file." >&2
+            echo "[WCX] ${group} BAM is empty (0 reads) — writing empty BED files." >&2
             touch ${sample_name}.wcx.${group}_aberrations.bed
+            touch ${sample_name}.wcx.${group}_bins.bed
+            touch ${sample_name}.wcx.${group}_segments.bed
             exit 0
         fi
 
@@ -168,6 +182,11 @@ process RUN_WCX {
             --alpha 0.01 \\
             --seed 100 \\
             --bed
+
+        # Ensure all BED files exist (WCX --bed always creates them, but be defensive)
+        [ -f "${sample_name}.wcx.${group}_bins.bed" ]       || touch "${sample_name}.wcx.${group}_bins.bed"
+        [ -f "${sample_name}.wcx.${group}_segments.bed" ]   || touch "${sample_name}.wcx.${group}_segments.bed"
+        [ -f "${sample_name}.wcx.${group}_aberrations.bed" ] || touch "${sample_name}.wcx.${group}_aberrations.bed"
 
         echo "[WCX] ${group} complete for ${sample_name}"
         """

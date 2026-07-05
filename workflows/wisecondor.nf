@@ -27,9 +27,10 @@ include { GXCNV_GC_INJECT }   from '../modules/gxcnv'
 include { GXCNV_PREDICT }     from '../modules/gxcnv'
 include { GXCNV_COMPARE }     from '../modules/gxcnv'
 include { GXCNV_PLOT }        from '../modules/gxcnv'
-include { GXCNV2_CONVERT }    from '../modules/gxcnv2'
 include { GXCNV2_PREDICT }    from '../modules/gxcnv2'
 include { GXCNV2_PLOT }       from '../modules/gxcnv2'
+include { GXCNV1_PREDICT }    from '../modules/gxcnv1'
+include { GXCNV1_PLOT }       from '../modules/gxcnv1'
 
 workflow WC_WORKFLOW {
     take:
@@ -43,8 +44,8 @@ workflow WC_WORKFLOW {
         gxcnv_thresh_z   // val: Track A Z-score threshold (default: -3.0)
         gxcnv_thresh_p   // val: Track B p-value threshold (default: 0.05)
         wig_norm_orig    // path: HMMcopy 50kb normalization (orig group) for GC injection
-        run_gxcnv2       // val: boolean — enable gxcnv2 (WCX-core, uses same WCX reference)
-        gxcnv2_zscore    // val: Z-score threshold for gxcnv2 aberration calling (default: 6.0)
+        run_gxcnv2       // val: boolean — enable gxcnv2 (WCX-core, reuses RUN_WCX BED outputs)
+        run_gxcnv1       // val: boolean — enable gxcnv1 (WC-core, reuses RUN_WC NPZ outputs)
 
     main:
         // ── Flatten trio → per-group (sample, group, bam, bai) tuples ──
@@ -182,37 +183,49 @@ workflow WC_WORKFLOW {
             }
         }
 
-        // ── gxcnv2 (WCX-core, WCX reference, different visualisation) ────────────
-        // Uses the same WCX reference.npz files — no new reference build needed.
-        // Runs independently of gxcnv; both can be active simultaneously.
+        // ── gxcnv2 (WCX-core, reuses RUN_WCX BED outputs — WCX result = gxcnv2) ──────
+        // Wired directly to RUN_WCX; requires run_wcx=true.
         ch_gxcnv2_calls = Channel.empty()
 
         if ( run_gxcnv2 ) {
-            ch_bam_all_groups2 = bam_trio.flatMap { t ->
-                [
-                    tuple(t[0], 'orig',  t[1], t[2]),
-                    tuple(t[0], 'fetus', t[3], t[4]),
-                    tuple(t[0], 'mom',   t[5], t[6]),
-                ]
+            if ( !params.run_wcx ) {
+                log.warn "[gxcnv2] Skipped: run_wcx=false (gxcnv2 requires WCX BED outputs)"
+            } else {
+                ch_gxcnv2_input = RUN_WCX.out.wcx_beds
+                    .map { sid, grp, bins_bed, segs_bed, aber_bed ->
+                        tuple("${sid}_${grp}", bins_bed, segs_bed, aber_bed)
+                    }
+
+                GXCNV2_PREDICT(ch_gxcnv2_input, analysisdir)
+
+                ch_gxcnv2_calls = GXCNV2_PREDICT.out.calls_tsv
+                    .map { composite_id, calls ->
+                        def parts = composite_id.toString().tokenize('_')
+                        def grp   = parts[-1]
+                        def sid   = parts[0..-2].join('_')
+                        tuple(sid, grp, calls)
+                    }
+
+                ch_plot2_input = GXCNV2_PREDICT.out.bins_tsv
+                    .join( GXCNV2_PREDICT.out.calls_tsv )
+                GXCNV2_PLOT( ch_plot2_input, analysisdir )
             }
+        }
 
-            // Convert BAM → WCX-format sample NPZ (binsize must match WCX reference)
-            GXCNV2_CONVERT(
-                ch_bam_all_groups2.map { sid, grp, bam, bai -> tuple("${sid}_${grp}", bam, bai) },
-                200000
-            )
+        // ── gxcnv1 (WC-core, reuses RUN_WC NPZ outputs — WC result = gxcnv1) ───────
+        // Wired directly to RUN_WC; always runs when run_gxcnv1=true (WC always runs).
+        ch_gxcnv1_calls = Channel.empty()
 
-            // Predict: WCX normalisation + MAD z-score + CBS → TSV outputs
-            GXCNV2_PREDICT(
-                GXCNV2_CONVERT.out.npz,
-                gender_txt,
-                labcode,
-                gxcnv2_zscore,
-                analysisdir
-            )
+        if ( run_gxcnv1 ) {
+            ch_gxcnv1_input = RUN_WC.out.wc_sample_npz
+                .join(RUN_WC.out.wc_out_npz, by: [0, 1])
+                .map { sid, grp, s_npz, out_npz ->
+                    tuple("${sid}_${grp}", s_npz, out_npz)
+                }
 
-            // Collect calls keyed to (sample_id, group)
-            ch_gxcnv2_calls = GXCNV2_PREDICT.out.calls_tsv
+            GXCNV1_PREDICT(ch_gxcnv1_input, analysisdir)
+
+            ch_gxcnv1_calls = GXCNV1_PREDICT.out.calls_tsv
                 .map { composite_id, calls ->
                     def parts = composite_id.toString().tokenize('_')
                     def grp   = parts[-1]
@@ -220,10 +233,9 @@ workflow WC_WORKFLOW {
                     tuple(sid, grp, calls)
                 }
 
-            // Plot — log2(ratio) style, genome + per-chromosome + KDE QC
-            ch_plot2_input = GXCNV2_PREDICT.out.bins_tsv
-                .join( GXCNV2_PREDICT.out.calls_tsv )
-            GXCNV2_PLOT( ch_plot2_input, analysisdir )
+            ch_plot1_input = GXCNV1_PREDICT.out.bins_tsv
+                .join( GXCNV1_PREDICT.out.calls_tsv )
+            GXCNV1_PLOT( ch_plot1_input, analysisdir )
         }
 
     emit:
@@ -232,4 +244,5 @@ workflow WC_WORKFLOW {
         gxcnv_calls      = ch_gxcnv_calls
         gxcnv_comparison = ch_gxcnv_comparison
         gxcnv2_calls     = ch_gxcnv2_calls
+        gxcnv1_calls     = ch_gxcnv1_calls
 }

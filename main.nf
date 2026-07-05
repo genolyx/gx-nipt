@@ -104,6 +104,12 @@ params.gxcnv_thresh_p  = 0.05   // Track B p-value threshold
 params.run_gxcnv2      = true   // enable gxcnv2 alongside gxcnv
 params.gxcnv2_zscore   = 6.0    // aberration z-score threshold, matches pipeline WCX (--zscore 6.0)
 
+// gxcnv1: Wisecondor-core prediction with MAD z-score enhancement.
+// Uses the SAME WC reference.npz — no additional reference building needed.
+//   {ref_dir}/labs/{labcode}/WC/{orig|fetus|mom}_200k*.npz
+params.run_gxcnv1      = true   // enable gxcnv1 alongside gxcnv2
+params.gxcnv1_zscore   = 5.5    // wisecondor test -minzscore threshold (default adaptive if not set)
+
 // When true, WisecondorX runs alongside gx-cnv for concordance validation.
 // Set to false once gx-cnv is validated and WCX is no longer needed.
 params.run_wcx = true
@@ -340,7 +346,7 @@ workflow {
         params.gxcnv_thresh_p,
         ch_wig_norm_orig,   // for gx-cnv GC injection
         params.run_gxcnv2,
-        params.gxcnv2_zscore
+        params.run_gxcnv1
     )
     ch_wc_result         = WC_WORKFLOW.out.wc_result
     ch_gxcnv_calls       = WC_WORKFLOW.out.gxcnv_calls
@@ -389,6 +395,7 @@ workflow.onComplete {
     def gxff_status  = params.gxff_model  ? "ENABLED (${params.gxff_model})"                                          : "DISABLED (seqFF only)"
     def gxcnv_status  = params.run_gxcnv  ? "ENABLED (auto: ${params.ref_dir}/labs/${params.labcode}/GXCNV/{sex}/)" : "DISABLED"
     def gxcnv2_status = params.run_gxcnv2 ? "ENABLED (WCX ref: ${params.ref_dir}/labs/${params.labcode}/WCX/, zscore=${params.gxcnv2_zscore})" : "DISABLED"
+    def gxcnv1_status = params.run_gxcnv1 ? "ENABLED (WC ref: ${params.ref_dir}/labs/${params.labcode}/WC/, zscore=${params.gxcnv1_zscore})" : "DISABLED"
     def wcx_status   = params.run_wcx          ? "ENABLED" : "DISABLED"
     def ssd_status   = params.use_ssd          ? "ENABLED (${params.scratch_dir})"      : "DISABLED"
 
@@ -454,6 +461,7 @@ workflow.onComplete {
     ║  gx-FF     : ${gxff_status}
     ║  gx-cnv    : ${gxcnv_status}
     ║  gxcnv2    : ${gxcnv2_status}
+    ║  gxcnv1    : ${gxcnv1_status}
     ║  WCX       : ${wcx_status}
     ║  SSD       : ${ssd_status}
     ║  Work Dir  : ${workflow.workDir}
