@@ -105,7 +105,7 @@ process RUN_WC {
         else
             echo "[WC] WARNING: cytoband file not found — plot without cytoband" >&2
         fi
-        PLOT_CMD+=(\${sample_name}.wc.${group}.out.npz ${sample_name}.wc.${group})
+        PLOT_CMD+=(${sample_name}.wc.${group}.out.npz ${sample_name}.wc.${group})
         "\${PLOT_CMD[@]}"
 
         if [ ! -f "${sample_name}.wc.${group}_z.png" ]; then
