@@ -53,6 +53,7 @@ RUN_GXCNV="false"
 RUN_GXCNV2="true"          # gxcnv2 enabled by default (matches main.nf default)
 GXCNV2_ZSCORE=""           # empty = use main.nf default (3.5)
 RUN_WCX="true"
+RUN_WC="true"
 
 # SSD scratch
 USE_SSD="false"
@@ -139,6 +140,7 @@ while [[ $# -gt 0 ]]; do
         --no-gxcnv2)         RUN_GXCNV2="false"; shift ;;
         --gxcnv2-zscore)     GXCNV2_ZSCORE="$2"; shift 2 ;;
         --no-wcx)            RUN_WCX="false"; shift ;;
+        --no-wc)             RUN_WC="false"; shift ;;
         --use-ssd)           USE_SSD="true"; shift ;;
         --scratch-dir)       SCRATCH_DIR="$2"; shift 2 ;;
         --ssd-max-usage-gb)  SSD_MAX_USAGE_GB="$2"; shift 2 ;;
@@ -332,6 +334,7 @@ if [[ "$RUN_GXCNV" == "true" ]];  then NF_ARGS+=( --run_gxcnv true ); fi
 if [[ "$RUN_GXCNV2" == "false" ]]; then NF_ARGS+=( --run_gxcnv2 false ); fi
 if [[ -n "$GXCNV2_ZSCORE" ]];     then NF_ARGS+=( --gxcnv2_zscore "$GXCNV2_ZSCORE" ); fi
 if [[ "$RUN_WCX" == "false" ]];   then NF_ARGS+=( --run_wcx false ); fi
+if [[ "$RUN_WC" == "false" ]];    then NF_ARGS+=( --run_wc false ); fi
 if [[ -n "$REF_DIR" ]];          then NF_ARGS+=( --ref_dir "$REF_DIR" ); fi
 
 # -----------------------------------------------------------

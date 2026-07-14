@@ -42,6 +42,13 @@ C_SEG_GAIN  = "#9B27AF"   # deep violet (gain segment)
 C_SEG_LOSS  = "#E64A19"   # deep orange (loss segment)
 C_RIBBON    = "#CFE8EC"   # pale teal (±MAD ribbon)
 C_GUIDE     = "#90A4AE"   # light steel for reference lines
+C_UNCALLABLE = "#CC99B2"  # Wisecondor "Uncallable region" (colorPalette[7])
+
+# Default cytoband search paths (first existing file wins)
+_DEFAULT_CYTO_PATHS = [
+    "/opt/gx-nipt/refs/bed/common/cytoBand.txt",
+    os.path.join(os.path.dirname(__file__), "..", "..", "refs", "bed", "common", "cytoBand.txt"),
+]
 
 # Trisomy log2(3/2) ≈ +0.585 and monosomy log2(1/2) ≈ -1.000
 LR_TRISOMY   =  0.585
@@ -175,6 +182,121 @@ def _clean_lr(lr, lo=-2.5, hi=2.5):
     return np.clip(np.where(np.isfinite(lr), lr, 0), lo, hi)
 
 
+def _format_call_label(row) -> str:
+    """Call label: type on first line, z-score in parentheses on second line."""
+    typ = str(row.get("type", "")).upper()
+    mz  = row.get("mean_z")
+    if typ and pd.notna(mz):
+        return f"{typ}\n({float(mz):.2f})"
+    return typ or "?"
+
+
+def _resolve_cytoband(path: str | None) -> str | None:
+    if path and os.path.isfile(path):
+        return path
+    for candidate in _DEFAULT_CYTO_PATHS:
+        candidate = os.path.abspath(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def load_cytobands(cyto_file: str) -> dict[str, list]:
+    """
+    Load UCSC cytoBand.txt into {chrom_num: [[start, end, name, stain], ...]}.
+    Keys are chromosome numbers without 'chr' prefix (e.g. '1', 'X').
+    """
+    cyto_dict: dict[str, list] = {}
+    cur_chrom = None
+    cur_bands: list = []
+    with open(cyto_file) as fh:
+        for line in fh:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            chrom_key = parts[0].replace("chr", "")
+            if chrom_key != cur_chrom:
+                if cur_chrom is not None:
+                    cyto_dict[cur_chrom] = cur_bands
+                cur_bands = []
+                cur_chrom = chrom_key
+            cur_bands.append(parts[1:])
+    if cur_chrom is not None:
+        cyto_dict[cur_chrom] = cur_bands
+    return cyto_dict
+
+
+def _positions_to_stretches(positions: list[int], max_dist: int = 1) -> list[tuple[int, int]]:
+    if not positions:
+        return []
+    stretches = []
+    start = positions[0]
+    for i, val in enumerate(positions[:-1]):
+        if positions[i + 1] - val > max_dist:
+            stretches.append((start, val))
+            start = positions[i + 1]
+    stretches.append((start, positions[-1]))
+    return stretches
+
+
+def _uncallable_spans(df_chr: pd.DataFrame) -> list[tuple[float, float]]:
+    """
+    Wisecondor marks bins with z_score == 0 as uncallable (masked / no reads).
+    Returns merged (start, end) spans in genomic coordinates.
+    """
+    if "z_score" not in df_chr.columns or df_chr.empty:
+        return []
+    zero_idx = [
+        i for i, z in enumerate(df_chr["z_score"].values)
+        if np.isfinite(z) and z == 0.0
+    ]
+    if not zero_idx:
+        return []
+    stretches = _positions_to_stretches(zero_idx)
+    spans = []
+    for i0, i1 in stretches:
+        spans.append((
+            float(df_chr.iloc[i0]["start"]),
+            float(df_chr.iloc[i1]["end"]),
+        ))
+    return spans
+
+
+def _draw_cytoband_track(ax, chrom: str, cyto_dict: dict[str, list]) -> None:
+    """Draw Wisecondor-style cytoband strip on a dedicated bottom axis."""
+    chrom_key = chrom.replace("chr", "")
+    bands = cyto_dict.get(chrom_key, [])
+    ax.set_ylim(0, 1)
+    ax.set_yticks([])
+    ax.patch.set_facecolor("white")
+
+    for band in bands:
+        start, end = float(band[0]), float(band[1])
+        stain = band[3] if len(band) > 3 else "gneg"
+        alpha_scale = 0.5
+        kwargs: dict = {"linewidth": 0.5, "edgecolor": "none"}
+
+        if stain.startswith("gpos"):
+            try:
+                alpha = float(stain[4:]) / 100.0
+            except ValueError:
+                alpha = 0.5
+            ax.add_patch(mpatches.Rectangle(
+                (start, 0), end - start, 1,
+                facecolor="black", alpha=alpha * alpha_scale, **kwargs,
+            ))
+        elif stain == "acen":
+            ax.add_patch(mpatches.Rectangle(
+                (start, 0), end - start, 1,
+                facecolor="black", alpha=alpha_scale, hatch="//", **kwargs,
+            ))
+        elif stain == "gvar":
+            ax.add_patch(mpatches.Rectangle(
+                (start, 0), end - start, 1,
+                facecolor="black", alpha=0.75 * alpha_scale, hatch="\\", **kwargs,
+            ))
+
+
 # ── Genome-wide plot ───────────────────────────────────────────────────────────
 
 def plot_genome(df: pd.DataFrame, calls: pd.DataFrame | None,
@@ -255,7 +377,7 @@ def plot_genome(df: pd.DataFrame, calls: pd.DataFrame | None,
             ax.axvspan(x0, x1, color=clr, alpha=0.22, zorder=6)
             ax.text(
                 (x0 + x1) / 2, 1.9,
-                str(row.get("type", "")), fontsize=6,
+                _format_call_label(row), fontsize=6,
                 ha="center", va="top", color=clr, fontweight="bold", zorder=7,
             )
 
@@ -296,16 +418,33 @@ def plot_genome(df: pd.DataFrame, calls: pd.DataFrame | None,
 
 def plot_chromosome(df_chr: pd.DataFrame, calls: pd.DataFrame | None,
                     chrom: str, prefix: str,
-                    segments: pd.DataFrame | None = None) -> None:
+                    segments: pd.DataFrame | None = None,
+                    cyto_dict: dict[str, list] | None = None) -> None:
     """
     Single-chromosome log2(ratio) panel.
 
     Layout: filled area + CBS segment line + confidence ribbon.
-    Annotated with any GAIN/LOSS calls for this chromosome.
+    Annotated with GAIN/LOSS calls (with z-score).
+    Optional cytoband track and uncallable-region shading (Wisecondor style).
     """
-    fig, ax = plt.subplots(figsize=(13, 3.2))
+    x_max = float(df_chr["end"].max())
+    has_cyto = cyto_dict is not None
+
+    if has_cyto:
+        fig = plt.figure(figsize=(13, 3.8))
+        gs = fig.add_gridspec(2, 1, height_ratios=[10, 1], hspace=0.06)
+        ax = fig.add_subplot(gs[0])
+        ax_cyto = fig.add_subplot(gs[1], sharex=ax)
+    else:
+        fig, ax = plt.subplots(figsize=(13, 3.2))
+        ax_cyto = None
+
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#FAFBFC")
+
+    # Uncallable regions (z_score == 0) — Wisecondor "Uncallable region"
+    for x0, x1 in _uncallable_spans(df_chr):
+        ax.axvspan(x0, x1, color=C_UNCALLABLE, alpha=0.5, zorder=0, linewidth=0)
 
     x   = (df_chr["start"].values + df_chr["end"].values) / 2
     lr  = _clean_lr(df_chr["log2_ratio"].values)
@@ -342,27 +481,49 @@ def plot_chromosome(df_chr: pd.DataFrame, calls: pd.DataFrame | None,
             ax.hlines(slr, seg["start"], seg["end"],
                       colors=sc, linewidths=lw, zorder=5)
 
-    # Highlight calls
+    # Highlight calls with z-score label (Wisecondor style)
     for _, row in chr_calls.iterrows():
         x0, x1 = float(row["start"]), float(row["end"])
-        typ     = str(row.get("type", ""))
+        typ     = str(row.get("type", "")).upper()
         clr     = C_GAIN if typ == "GAIN" else C_LOSS
+        label   = _format_call_label(row)
         ax.axvspan(x0, x1, color=clr, alpha=0.18, zorder=6)
-        ax.text((x0 + x1) / 2, 2.1, typ,
-                fontsize=7, ha="center", color=clr,
+        va = "top" if typ == "GAIN" else "bottom"
+        y_pos = 2.1 if typ == "GAIN" else -2.1
+        ax.text((x0 + x1) / 2, y_pos, label,
+                fontsize=7, ha="center", va=va, color=clr,
                 fontweight="bold", zorder=7)
 
     chrom_label = chrom.replace("chr", "")
     ax.set_title(f"{os.path.basename(prefix)} — Chr {chrom_label}  [log₂ ratio]",
                  fontsize=9)
-    ax.set_xlabel("Genomic position", fontsize=8)
     ax.set_ylabel("log₂(ratio)", fontsize=8)
     ax.set_ylim(-2.5, 2.5)
-    ax.xaxis.set_major_formatter(
-        ticker.FuncFormatter(lambda v, _: f"{v/1e6:.0f} Mb")
-    )
+    ax.set_xlim(0, x_max)
 
-    plt.tight_layout(pad=0.3)
+    if ax_cyto is not None:
+        _draw_cytoband_track(ax_cyto, chrom, cyto_dict)
+        plt.setp(ax.get_xticklabels(), visible=False)
+        ax_cyto.set_xlabel("Genomic position", fontsize=8)
+        ax_cyto.xaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda v, _: f"{v/1e6:.0f} Mb")
+        )
+    else:
+        ax.set_xlabel("Genomic position", fontsize=8)
+        ax.xaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda v, _: f"{v/1e6:.0f} Mb")
+        )
+
+    legend_handles = [
+        mpatches.Patch(color=C_UNCALLABLE, alpha=0.5, label="Uncallable region"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=7, loc="upper right",
+              framealpha=0.85, edgecolor="#CCCCCC")
+
+    if ax_cyto is not None:
+        fig.subplots_adjust(hspace=0.08)
+    else:
+        plt.tight_layout(pad=0.3)
     safe = chrom.replace("/", "_")
     out = f"{prefix}_{safe}.png"
     plt.savefig(out, dpi=130, bbox_inches="tight")
@@ -439,6 +600,8 @@ def main():
     ap.add_argument("-o", "--prefix", required=True)
     ap.add_argument("--chromosomes", nargs="*", default=None,
                     help="Only plot these chromosomes (default: all)")
+    ap.add_argument("--cytoband", default=None,
+                    help="UCSC cytoBand.txt path (auto-detected if omitted)")
     args = ap.parse_args()
 
     df_bins = load_bins(args.bins)
@@ -459,6 +622,14 @@ def main():
     if segments is not None:
         print(f"[plot_gxcnv1] Loaded {len(segments)} CBS segments", flush=True)
 
+    cyto_path = _resolve_cytoband(args.cytoband)
+    cyto_dict = load_cytobands(cyto_path) if cyto_path else None
+    if cyto_dict:
+        print(f"[plot_gxcnv1] Loaded cytobands from {cyto_path}", flush=True)
+    else:
+        print("[plot_gxcnv1] No cytoband file — per-chromosome plots omit cytoband track",
+              flush=True)
+
     # Genome-wide
     plot_genome(df_bins, calls, args.prefix, segments=segments)
 
@@ -470,7 +641,8 @@ def main():
         df_chr = df_bins[df_bins["chrom"] == chrom]
         if len(df_chr) == 0:
             continue
-        plot_chromosome(df_chr, calls, chrom, args.prefix, segments=segments)
+        plot_chromosome(df_chr, calls, chrom, args.prefix,
+                        segments=segments, cyto_dict=cyto_dict)
 
     # QC
     plot_qc(df_bins, args.prefix)

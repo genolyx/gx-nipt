@@ -59,12 +59,16 @@ workflow WC_WORKFLOW {
         }
 
         // ── WC (Wisecondor) ─────────────────────────────────────────────
-        RUN_WC(
-            ch_bam_by_group,
-            ch_config,
-            labcode,
-            analysisdir
-        )
+        ch_wc_result = Channel.empty()
+        if ( params.run_wc ) {
+            RUN_WC(
+                ch_bam_by_group,
+                ch_config,
+                labcode,
+                analysisdir
+            )
+            ch_wc_result = RUN_WC.out.wc_result
+        }
 
         // ── WCX (WisecondorX) ───────────────────────────────────────────
         ch_wcx_result = Channel.empty()
@@ -213,34 +217,38 @@ workflow WC_WORKFLOW {
         }
 
         // ── gxcnv1 (WC-core, reuses RUN_WC NPZ outputs — WC result = gxcnv1) ───────
-        // Wired directly to RUN_WC; always runs when run_gxcnv1=true (WC always runs).
+        // Wired directly to RUN_WC; requires run_wc=true.
         ch_gxcnv1_calls = Channel.empty()
 
         if ( run_gxcnv1 ) {
-            ch_gxcnv1_input = RUN_WC.out.wc_sample_npz
-                .join(RUN_WC.out.wc_out_npz, by: [0, 1])
-                .map { sid, grp, s_npz, out_npz ->
-                    tuple("${sid}_${grp}", s_npz, out_npz)
-                }
+            if ( !params.run_wc ) {
+                log.warn "[gxcnv1] Skipped: run_wc=false (gxcnv1 requires WC NPZ outputs)"
+            } else {
+                ch_gxcnv1_input = RUN_WC.out.wc_sample_npz
+                    .join(RUN_WC.out.wc_out_npz, by: [0, 1])
+                    .map { sid, grp, s_npz, out_npz ->
+                        tuple("${sid}_${grp}", s_npz, out_npz)
+                    }
 
-            GXCNV1_PREDICT(ch_gxcnv1_input, analysisdir)
+                GXCNV1_PREDICT(ch_gxcnv1_input, analysisdir)
 
-            ch_gxcnv1_calls = GXCNV1_PREDICT.out.calls_tsv
-                .map { composite_id, calls ->
-                    def parts = composite_id.toString().tokenize('_')
-                    def grp   = parts[-1]
-                    def sid   = parts[0..-2].join('_')
-                    tuple(sid, grp, calls)
-                }
+                ch_gxcnv1_calls = GXCNV1_PREDICT.out.calls_tsv
+                    .map { composite_id, calls ->
+                        def parts = composite_id.toString().tokenize('_')
+                        def grp   = parts[-1]
+                        def sid   = parts[0..-2].join('_')
+                        tuple(sid, grp, calls)
+                    }
 
-            ch_plot1_input = GXCNV1_PREDICT.out.bins_tsv
-                .join( GXCNV1_PREDICT.out.calls_tsv )
-            GXCNV1_PLOT( ch_plot1_input, analysisdir )
+                ch_plot1_input = GXCNV1_PREDICT.out.bins_tsv
+                    .join( GXCNV1_PREDICT.out.calls_tsv )
+                GXCNV1_PLOT( ch_plot1_input, analysisdir )
+            }
         }
 
     emit:
         // Each element: (sample, group, result_path) — WC ∪ WCX
-        wc_result        = RUN_WC.out.wc_result.mix( ch_wcx_result )
+        wc_result        = ch_wc_result.mix( ch_wcx_result )
         gxcnv_calls      = ch_gxcnv_calls
         gxcnv_comparison = ch_gxcnv_comparison
         gxcnv2_calls     = ch_gxcnv2_calls

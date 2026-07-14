@@ -44,6 +44,7 @@
  *     Set --gxcnv_reference /path/to/reference.npz to enable.
  *     Produces concordance report vs WCX for validation.
  *     Once validated, disable WCX with --run_wcx false.
+ *     Once gxcnv1 replaces WC, disable WC with --run_wc false.
  */
 
 nextflow.enable.dsl = 2
@@ -113,6 +114,10 @@ params.gxcnv1_zscore   = 5.5    // wisecondor test -minzscore threshold (default
 // When true, WisecondorX runs alongside gx-cnv for concordance validation.
 // Set to false once gx-cnv is validated and WCX is no longer needed.
 params.run_wcx = true
+
+// When true, legacy Wisecondor (WC) runs (convert + test + report + plot).
+// Set to false once gxcnv1 is validated as a full replacement for WC.
+params.run_wc = true
 
 // ─────────────────────────────────────────────────────────
 // Validate required parameters
@@ -396,7 +401,8 @@ workflow.onComplete {
     def gxcnv_status  = params.run_gxcnv  ? "ENABLED (auto: ${params.ref_dir}/labs/${params.labcode}/GXCNV/{sex}/)" : "DISABLED"
     def gxcnv2_status = params.run_gxcnv2 ? "ENABLED (WCX ref: ${params.ref_dir}/labs/${params.labcode}/WCX/, zscore=${params.gxcnv2_zscore})" : "DISABLED"
     def gxcnv1_status = params.run_gxcnv1 ? "ENABLED (WC ref: ${params.ref_dir}/labs/${params.labcode}/WC/, zscore=${params.gxcnv1_zscore})" : "DISABLED"
-    def wcx_status   = params.run_wcx          ? "ENABLED" : "DISABLED"
+    def wc_status    = params.run_wc          ? "ENABLED" : "DISABLED"
+    def wcx_status   = params.run_wcx         ? "ENABLED" : "DISABLED"
     def ssd_status   = params.use_ssd          ? "ENABLED (${params.scratch_dir})"      : "DISABLED"
 
     // ── SSD workDir cleanup ──────────────────────────────────────────────────
@@ -462,6 +468,7 @@ workflow.onComplete {
     ║  gx-cnv    : ${gxcnv_status}
     ║  gxcnv2    : ${gxcnv2_status}
     ║  gxcnv1    : ${gxcnv1_status}
+    ║  WC        : ${wc_status}
     ║  WCX       : ${wcx_status}
     ║  SSD       : ${ssd_status}
     ║  Work Dir  : ${workflow.workDir}

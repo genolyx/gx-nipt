@@ -35,6 +35,7 @@ process RUN_WC {
         tuple val(sample_name), val(group),
               path("${sample_name}.wc.${group}.out.npz"),
               emit: wc_out_npz
+        path "${sample_name}.wc.${group}_z.png", emit: wc_plot, optional: true
 
     script:
         // Actual NPZ naming convention in refs:
@@ -63,6 +64,7 @@ process RUN_WC {
             printf "WC\\t${group}\\tSKIPPED (empty BAM)\\n" > ${sample_name}.wc.${group}.report.txt
             touch ${sample_name}.wc.${group}.npz
             touch ${sample_name}.wc.${group}.out.npz
+            touch ${sample_name}.wc.${group}_z.png
             exit 0
         fi
 
@@ -84,7 +86,34 @@ process RUN_WC {
             ${sample_name}.wc.${group}.out.npz \\
             > ${sample_name}.wc.${group}.report.txt
 
-        echo "[WC] ${group} complete for ${sample_name}"
+        # ── Step 4: Plot → {sample}.wc.{group}_z.png (native Wisecondor image) ─
+        CYTO_FILE=""
+        for _cyto in \\
+            "${params.ref_dir}/bed/common/cytoBand.txt" \\
+            "${params.ref_dir}/bed/common/common/cytoBand.txt"
+        do
+            if [ -f "\${_cyto}" ]; then
+                CYTO_FILE="\${_cyto}"
+                break
+            fi
+        done
+
+        PLOT_CMD=(python2 /opt/wisecondor/wisecondor.py plot -filetype png)
+        if [ -n "\${CYTO_FILE}" ]; then
+            PLOT_CMD+=(-cytofile "\${CYTO_FILE}")
+            echo "[WC] Using cytoband: \${CYTO_FILE}" >&2
+        else
+            echo "[WC] WARNING: cytoband file not found — plot without cytoband" >&2
+        fi
+        PLOT_CMD+=(\${sample_name}.wc.${group}.out.npz ${sample_name}.wc.${group})
+        "\${PLOT_CMD[@]}"
+
+        if [ ! -f "${sample_name}.wc.${group}_z.png" ]; then
+            echo "[WC] ERROR: plot step did not produce ${sample_name}.wc.${group}_z.png" >&2
+            exit 1
+        fi
+
+        echo "[WC] ${group} complete for ${sample_name} (report + plot)"
         """
 }
 

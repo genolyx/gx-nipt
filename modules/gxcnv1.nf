@@ -166,15 +166,17 @@ process GXCNV1_PLOT {
     tuple val(sample_id), path("${sample_id}_chr*.png"),   emit: chr_pngs, optional: true
 
     script:
+    def cyto_file = "${params.ref_dir}/bed/common/cytoBand.txt"
     """
     set -euo pipefail
 
     export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
 
     python3 /opt/gx-nipt/bin/scripts/plot_gxcnv1.py \\
-        --bins  ${bins_tsv} \\
-        --calls ${calls_tsv} \\
-        -o      ${sample_id}
+        --bins     ${bins_tsv} \\
+        --calls    ${calls_tsv} \\
+        --cytoband ${cyto_file} \\
+        -o         ${sample_id}
     """
 
     stub:
