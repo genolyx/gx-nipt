@@ -129,7 +129,7 @@ workflow ALIGN_WORKFLOW {
 
         // ── Step 8: TLEN-based split (orig / fetus / mom) ─────
         // proper_paired.bam → of_orig.bam + of_fetus.bam + of_mom.bam
-        // Downstream HMMcopy / PRIZM / WC(X) expect all three.
+        // WC(X) orig uses proper_paired; PRIZM orig 10mb uses of_orig (ken-nipt).
         SAMTOOLS_SPLIT_FETUS_MOM(
             sample_name,
             ch_proper_bam,
@@ -141,4 +141,5 @@ workflow ALIGN_WORKFLOW {
         proper_bam = ch_proper_bam
         proper_bai = ch_proper_bai
         bam_trio   = SAMTOOLS_SPLIT_FETUS_MOM.out.trio
+        of_orig    = SAMTOOLS_SPLIT_FETUS_MOM.out.of_orig
 }

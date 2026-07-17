@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Nextflow docker CLI wrapper — maps random nxf-* container names to
+# human-readable names: <order_id>-<process>[-<group>].
+#
+# Nextflow always passes --name $NXF_BOXID (random). This wrapper renames
+# at `docker run` time and keeps a mapping so `docker rm/stop $NXF_BOXID`
+# still works during task cleanup.
+#
+# Enable by prepending this directory to PATH before launching Nextflow:
+#   export PATH="/path/to/gx-nipt/bin/nxf-docker:$PATH"
+
+set -euo pipefail
+
+REAL_DOCKER="${NXF_DOCKER_REAL:-/usr/bin/docker}"
+MAP_DIR="${NXF_DOCKER_MAP_DIR:-/tmp/nxf-docker-name-map}"
+mkdir -p "$MAP_DIR"
+
+_sanitize() {
+    echo "$1" | sed 's/[^a-zA-Z0-9_.-]/_/g' | cut -c1-63
+}
+
+_lookup_map() {
+    local id="$1"
+    if [[ -f "$MAP_DIR/$id" ]]; then
+        cat "$MAP_DIR/$id"
+        return 0
+    fi
+    return 1
+}
+
+_store_map() {
+    local orig="$1" real="$2"
+    printf '%s' "$real" > "$MAP_DIR/$orig"
+}
+
+_build_name() {
+    local order="$1" task_label="$2"
+    [[ -z "$order" || -z "$task_label" ]] && return 1
+
+    local proc detail suffix name
+    proc=$(echo "$task_label" | sed -E 's/^[^:]+:([^ (]+).*/\1/')
+    detail=$(echo "$task_label" | sed -nE 's/.*\(([^)]+)\).*/\1/p')
+
+    name="${order}-${proc}"
+    if [[ -n "$detail" ]]; then
+        if [[ "$detail" == *:* ]]; then
+            suffix="${detail#*:}"
+        elif [[ "$detail" == "${order}_"* ]]; then
+            suffix="${detail#${order}_}"
+        elif [[ "$detail" != "$order" ]]; then
+            suffix="$detail"
+        fi
+        [[ -n "${suffix:-}" ]] && name="${name}-${suffix}"
+    fi
+    _sanitize "$name"
+}
+
+if [[ "${1:-}" != "run" ]]; then
+    case "${1:-}" in
+        rm|stop|kill|inspect|logs|exec|wait|pause|unpause|restart|top|stats|port|update|rename|cp|diff|export|commit)
+            if [[ $# -ge 2 ]]; then
+                mapped=$(_lookup_map "$2" || true)
+                if [[ -n "${mapped:-}" ]]; then
+                    set -- "$1" "$mapped" "${@:3}"
+                fi
+            fi
+            ;;
+    esac
+    exec "$REAL_DOCKER" "$@"
+fi
+
+# docker run — parse labels and rewrite --name
+order=""
+task_label=""
+orig_name=""
+new_name=""
+args=("$@")
+new_args=()
+i=0
+skip_next=false
+
+while [[ $i -lt ${#args[@]} ]]; do
+    if $skip_next; then
+        skip_next=false
+        i=$((i + 1))
+        continue
+    fi
+
+    arg="${args[$i]}"
+
+    if [[ "$arg" == --label && $((i + 1)) -lt ${#args[@]} ]]; then
+        label="${args[$((i + 1))]}"
+        label="${label#\'}"; label="${label%\'}"
+        case "$label" in
+            nxf.order=*)  order="${label#nxf.order=}" ;;
+            nxf.task=*)   task_label="${label#nxf.task=}" ;;
+        esac
+        new_args+=("$arg" "${args[$((i + 1))]}")
+        skip_next=true
+    elif [[ "$arg" == --name && $((i + 1)) -lt ${#args[@]} ]]; then
+        orig_name="${args[$((i + 1))]}"
+        new_args+=("$arg")
+        skip_next=true
+    else
+        new_args+=("$arg")
+    fi
+    i=$((i + 1))
+done
+
+if [[ -n "$orig_name" ]]; then
+    new_name=$(_build_name "$order" "$task_label" || true)
+    if [[ -n "$new_name" ]]; then
+        # Avoid name collision if a stale container exists
+        if "$REAL_DOCKER" inspect "$new_name" &>/dev/null; then
+            new_name="${new_name}-$(_sanitize "${orig_name:4:6}")"
+        fi
+        _store_map "$orig_name" "$new_name"
+        # First pass omits the original name value after --name.
+        rebuilt=()
+        for item in "${new_args[@]}"; do
+            if [[ "$item" == --name ]]; then
+                rebuilt+=("--name" "$new_name")
+            else
+                rebuilt+=("$item")
+            fi
+        done
+        new_args=("${rebuilt[@]}")
+    fi
+fi
+
+exec "$REAL_DOCKER" "${new_args[@]}"

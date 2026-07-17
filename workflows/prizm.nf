@@ -5,6 +5,7 @@
  *  Input:
  *    norm_10mb : channel of (sample, group, norm.txt) tuples
  *                emitted by HMMCOPY_WORKFLOW for every group.
+ *                orig 10mb is from of_orig.bam (ken-nipt PRIZM path).
  *                PRIZM ingests this 10mb normalisation TXT
  *                directly as its "count_file_10mb".
  *    gender_txt: path channel — <sample>.gender.txt from

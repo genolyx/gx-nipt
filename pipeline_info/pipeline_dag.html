@@ -38,330 +38,225 @@ flowchart TB
     v0["Channel.fromPath"]
     v4["sample_name"]
     v5["analysisdir"]
-    v8["ch_config"]
-    v9["sample_name"]
-    v10["analysisdir"]
-    v14["sample_name"]
-    v15["analysisdir"]
-    v18["res"]
-    v19["analysisdir"]
-    v21["res"]
-    v22["analysisdir"]
-    v24["res"]
-    v25["analysisdir"]
-    v27["res"]
-    v28["analysisdir"]
-    v33["sample_name"]
-    v34["labcode"]
-    v35["analysisdir"]
-    v37["sample_name"]
-    v38["labcode"]
-    v39["analysisdir"]
-    v41["sample_name"]
-    v42["labcode"]
-    v43["analysisdir"]
-    v45["sample_name"]
-    v46["analysisdir"]
-    v50["analysisdir"]
-    v55["sample_name"]
-    v56["analysisdir"]
-    v60["labcode"]
-    v61["analysisdir"]
-    v65["labcode"]
-    v66["analysisdir"]
-    v76["labcode"]
-    v77["analysisdir"]
-    v87["bin_size"]
-    v88["blacklist_bed"]
-    v95["labcode"]
-    v96["thresh_z"]
-    v97["thresh_p"]
-    v98["fetal_fraction"]
-    v99["analysisdir"]
-    v108["analysisdir"]
-    v125["analysisdir"]
-    v131["analysisdir"]
-    v138["analysisdir"]
-    v149["sample_name"]
-    v150["labcode"]
-    v151["analysisdir"]
-    v164["sample_name"]
-    v165["labcode"]
-    v166["analysisdir"]
-    v168["sample_name"]
-    v169["labcode"]
-    v170["analysisdir"]
-    v172["sample_name"]
-    v173["analysisdir"]
-    v174["outdir"]
+    v7["ch_config"]
+    v8["sample_name"]
+    v9["analysisdir"]
+    v13["sample_name"]
+    v14["analysisdir"]
+    v20["res"]
+    v21["analysisdir"]
+    v23["res"]
+    v24["analysisdir"]
+    v26["res"]
+    v27["analysisdir"]
+    v29["res"]
+    v30["analysisdir"]
+    v35["sample_name"]
+    v36["labcode"]
+    v37["analysisdir"]
+    v39["sample_name"]
+    v40["labcode"]
+    v41["analysisdir"]
+    v43["sample_name"]
+    v44["labcode"]
+    v45["analysisdir"]
+    v47["sample_name"]
+    v48["analysisdir"]
+    v52["analysisdir"]
+    v57["sample_name"]
+    v58["analysisdir"]
+    v62["labcode"]
+    v63["analysisdir"]
+    v67["labcode"]
+    v68["analysisdir"]
+    v88["sample_name"]
+    v89["labcode"]
+    v90["analysisdir"]
+    v103["sample_name"]
+    v104["labcode"]
+    v105["analysisdir"]
+    v107["sample_name"]
+    v108["labcode"]
+    v109["analysisdir"]
+    v111["sample_name"]
+    v112["analysisdir"]
+    v113["outdir"]
     end
     subgraph "ALIGN_WORKFLOW [ALIGN_WORKFLOW]"
     v6(["SAMTOOLS_SPLIT_FETUS_MOM"])
     v3(( ))
     end
+    subgraph "QC_WORKFLOW [QC_WORKFLOW]"
+    v10(["QUALIMAP"])
+    v15(["QC_FILTER"])
+    end
     subgraph " "
-    v7[" "]
+    v11[" "]
     v12[" "]
-    v13[" "]
-    v52[" "]
-    v54["ch_ff_tsv_path"]
-    v63[" "]
-    v64[" "]
-    v68[" "]
-    v69[" "]
+    v54[" "]
+    v56["ch_ff_tsv_path"]
+    v65[" "]
+    v66[" "]
     v70[" "]
     v71[" "]
-    v79[" "]
-    v80[" "]
-    v90[" "]
-    v92[" "]
-    v101[" "]
-    v102[" "]
-    v103[" "]
-    v104[" "]
-    v106["ch_gxcnv_calls"]
-    v110[" "]
-    v111[" "]
-    v112[" "]
-    v113[" "]
-    v127[" "]
-    v133[" "]
-    v134[" "]
-    v135[" "]
-    v140[" "]
-    v141[" "]
-    v142[" "]
-    v176[" "]
-    end
-    subgraph "QC_WORKFLOW [QC_WORKFLOW]"
-    v11(["QUALIMAP"])
-    v16(["QC_FILTER"])
+    v72[" "]
+    v73[" "]
+    v75["ch_bam_by_group"]
+    v115[" "]
     end
     subgraph "HMMCOPY_WORKFLOW [HMMCOPY_WORKFLOW]"
-    v20(["READCOUNTER_50K"])
-    v23(["READCOUNTER_10M"])
-    v26(["HMMCOPY_R_50K"])
-    v29(["HMMCOPY_R_10M"])
+    v22(["READCOUNTER_50K"])
+    v25(["READCOUNTER_10M"])
+    v28(["HMMCOPY_R_50K"])
+    v31(["HMMCOPY_R_10M"])
+    v16(( ))
     v17(( ))
     end
     subgraph "FF_GENDER_WORKFLOW [FF_GENDER_WORKFLOW]"
-    v36(["CALCULATE_YFF"])
-    v40(["CALCULATE_YFF2"])
-    v44(["CALCULATE_SEQFF"])
-    v47(["CALCULATE_FRAGMENT_FF"])
-    v51(["GXFF_ENSEMBLE"])
-    v57(["GENDER_DECISION"])
-    v48(( ))
-    v53(( ))
+    v38(["CALCULATE_YFF"])
+    v42(["CALCULATE_YFF2"])
+    v46(["CALCULATE_SEQFF"])
+    v49(["CALCULATE_FRAGMENT_FF"])
+    v53(["GXFF_ENSEMBLE"])
+    v59(["GENDER_DECISION"])
+    v50(( ))
+    v55(( ))
     end
     subgraph "EZD_WORKFLOW [EZD_WORKFLOW]"
-    v62(["RUN_EZD"])
+    v64(["RUN_EZD"])
     end
     subgraph "PRIZM_WORKFLOW [PRIZM_WORKFLOW]"
-    v67(["RUN_PRIZM"])
-    end
-    subgraph "WC_WORKFLOW [WC_WORKFLOW]"
-    v78(["RUN_WCX"])
-    v89(["GXCNV_CONVERT"])
-    v91(["GXCNV_GC_INJECT"])
-    v100(["GXCNV_PREDICT"])
-    v109(["GXCNV_PLOT"])
-    v126(["GXCNV_COMPARE"])
-    v132(["GXCNV2_PREDICT"])
-    v139(["GXCNV2_PLOT"])
-    v72(( ))
-    v85(( ))
-    v93(( ))
-    v105(( ))
-    v107(( ))
-    v114(( ))
-    v130(( ))
-    v136(( ))
-    v137(( ))
-    v145(( ))
+    v69(["RUN_PRIZM"])
     end
     subgraph "MD_WORKFLOW [MD_WORKFLOW]"
-    v152(["RUN_MD_DETECTION"])
-    v147(( ))
+    v91(["RUN_MD_DETECTION"])
+    v86(( ))
     end
     subgraph "REPORT_WORKFLOW [REPORT_WORKFLOW]"
-    v167(["GENERATE_JSON"])
-    v171(["GENERATE_HTML"])
-    v175(["COPY_TO_OUTPUT"])
-    v153(( ))
+    v106(["GENERATE_JSON"])
+    v110(["GENERATE_HTML"])
+    v114(["COPY_TO_OUTPUT"])
+    v92(( ))
     end
-    v30(( ))
-    v58(( ))
-    v59(( ))
-    v146(( ))
+    v32(( ))
+    v60(( ))
+    v61(( ))
+    subgraph "WC_WORKFLOW [WC_WORKFLOW]"
+    v74(( ))
+    v84(( ))
+    end
     v0 --> v6
-    v0 --> v11
-    v0 --> v36
-    v0 --> v44
-    v0 --> v47
+    v0 --> v10
+    v0 --> v38
+    v0 --> v46
+    v0 --> v49
     v0 --> v3
     v4 --> v6
     v5 --> v6
     v3 --> v6
-    v6 --> v7
+    v6 --> v16
     v6 --> v17
-    v6 --> v72
-    v6 --> v85
-    v8 --> v11
-    v8 --> v16
-    v8 --> v36
-    v8 --> v40
-    v8 --> v44
-    v8 --> v47
-    v8 --> v57
-    v8 --> v62
-    v8 --> v67
-    v8 --> v78
-    v8 --> v152
-    v8 --> v167
-    v8 --> v171
-    v9 --> v11
+    v6 --> v74
+    v7 --> v10
+    v7 --> v15
+    v7 --> v38
+    v7 --> v42
+    v7 --> v46
+    v7 --> v49
+    v7 --> v59
+    v7 --> v64
+    v7 --> v69
+    v7 --> v91
+    v7 --> v106
+    v7 --> v110
+    v8 --> v10
+    v9 --> v10
+    v10 --> v12
+    v10 --> v15
     v10 --> v11
-    v11 --> v13
-    v11 --> v16
-    v11 --> v12
-    v14 --> v16
-    v15 --> v16
-    v16 --> v153
-    v18 --> v20
-    v19 --> v20
-    v17 --> v20
-    v20 --> v26
-    v21 --> v23
-    v22 --> v23
-    v17 --> v23
-    v23 --> v29
-    v24 --> v26
-    v25 --> v26
-    v26 --> v62
-    v26 --> v30
-    v27 --> v29
-    v28 --> v29
-    v29 --> v67
-    v33 --> v36
-    v34 --> v36
-    v35 --> v36
-    v3 --> v36
-    v36 --> v57
-    v37 --> v40
-    v38 --> v40
-    v39 --> v40
-    v30 --> v40
-    v40 --> v57
-    v41 --> v44
-    v42 --> v44
-    v43 --> v44
-    v3 --> v44
-    v44 --> v57
-    v44 --> v48
-    v45 --> v47
-    v46 --> v47
-    v3 --> v47
-    v47 --> v57
-    v50 --> v51
-    v48 --> v51
-    v51 --> v52
-    v51 --> v53
-    v51 --> v58
-    v51 --> v153
+    v13 --> v15
+    v14 --> v15
+    v15 --> v92
+    v20 --> v22
+    v21 --> v22
+    v16 --> v22
+    v22 --> v28
+    v23 --> v25
+    v24 --> v25
+    v17 --> v25
+    v25 --> v31
+    v26 --> v28
+    v27 --> v28
+    v28 --> v64
+    v28 --> v32
+    v29 --> v31
+    v30 --> v31
+    v31 --> v69
+    v35 --> v38
+    v36 --> v38
+    v37 --> v38
+    v3 --> v38
+    v38 --> v59
+    v39 --> v42
+    v40 --> v42
+    v41 --> v42
+    v32 --> v42
+    v42 --> v59
+    v43 --> v46
+    v44 --> v46
+    v45 --> v46
+    v3 --> v46
+    v46 --> v59
+    v46 --> v50
+    v47 --> v49
+    v48 --> v49
+    v3 --> v49
+    v49 --> v59
+    v52 --> v53
+    v50 --> v53
     v53 --> v54
-    v55 --> v57
-    v56 --> v57
+    v53 --> v55
+    v53 --> v60
+    v53 --> v92
+    v55 --> v56
     v57 --> v59
-    v57 --> v153
-    v60 --> v62
-    v61 --> v62
+    v58 --> v59
+    v59 --> v61
+    v59 --> v92
     v62 --> v64
-    v62 --> v63
-    v62 --> v153
-    v65 --> v67
-    v66 --> v67
-    v59 --> v67
-    v67 --> v71
-    v67 --> v70
+    v63 --> v64
+    v64 --> v66
+    v64 --> v65
+    v64 --> v92
     v67 --> v69
-    v67 --> v68
-    v67 --> v153
-    v76 --> v78
-    v77 --> v78
-    v59 --> v78
-    v72 --> v78
-    v78 --> v80
-    v78 --> v79
-    v78 --> v114
-    v78 --> v130
-    v78 --> v145
-    v87 --> v89
-    v88 --> v89
-    v85 --> v89
+    v68 --> v69
+    v61 --> v69
+    v69 --> v73
+    v69 --> v72
+    v69 --> v71
+    v69 --> v70
+    v69 --> v92
+    v74 --> v75
+    v88 --> v91
     v89 --> v91
-    v89 --> v90
-    v30 --> v91
+    v90 --> v91
+    v86 --> v91
     v91 --> v92
-    v91 --> v93
-    v95 --> v100
-    v96 --> v100
-    v97 --> v100
-    v98 --> v100
-    v99 --> v100
-    v59 --> v100
-    v93 --> v100
-    v100 --> v104
-    v100 --> v103
-    v100 --> v102
-    v100 --> v101
-    v100 --> v105
-    v100 --> v107
-    v100 --> v114
+    v103 --> v106
+    v104 --> v106
     v105 --> v106
-    v108 --> v109
-    v107 --> v109
-    v109 --> v113
-    v109 --> v112
-    v109 --> v111
+    v92 --> v106
+    v106 --> v110
+    v106 --> v114
+    v107 --> v110
+    v108 --> v110
     v109 --> v110
-    v125 --> v126
-    v114 --> v126
-    v126 --> v127
-    v126 --> v146
-    v131 --> v132
-    v130 --> v132
-    v132 --> v135
-    v132 --> v134
-    v132 --> v133
-    v132 --> v136
-    v132 --> v137
-    v138 --> v139
-    v137 --> v139
-    v139 --> v142
-    v139 --> v141
-    v139 --> v140
-    v149 --> v152
-    v150 --> v152
-    v151 --> v152
-    v147 --> v152
-    v152 --> v153
-    v164 --> v167
-    v165 --> v167
-    v166 --> v167
-    v153 --> v167
-    v167 --> v171
-    v167 --> v175
-    v168 --> v171
-    v169 --> v171
-    v170 --> v171
-    v171 --> v175
-    v172 --> v175
-    v173 --> v175
-    v174 --> v175
-    v175 --> v176
-    v136 --> v153
-    v145 --> v147
+    v110 --> v114
+    v111 --> v114
+    v112 --> v114
+    v113 --> v114
+    v114 --> v115
+    v84 --> v86
 
 </pre>
 <script type="module">

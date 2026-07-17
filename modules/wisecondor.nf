@@ -145,6 +145,8 @@ process RUN_WCX {
 
     script:
         def binsize = 200000
+        // ken-nipt pipeline_config.json WCX: orig/fetus=6, mom=15
+        def wcx_zscore = (group == 'mom') ? 15 : 6
         """
         set -euo pipefail
 
@@ -202,12 +204,13 @@ process RUN_WCX {
             --binsize ${binsize}
 
         # Run WisecondorX predict with gender-aware reference
+        # zscore thresholds from pipeline_config.json WCX section (ken-nipt: orig/fetus=6, mom=15)
         # --alpha and --seed match ken-nipt's invocation for reproducibility
         WisecondorX predict \\
             ${sample_name}.wcx.${group}.npz \\
             \${REF_NPZ} \\
             ${sample_name}.wcx.${group} \\
-            --zscore 6.0 \\
+            --zscore ${wcx_zscore} \\
             --alpha 0.01 \\
             --seed 100 \\
             --bed

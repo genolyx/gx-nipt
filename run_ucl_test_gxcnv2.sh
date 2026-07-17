@@ -5,6 +5,7 @@ set -euo pipefail
 NEXTFLOW=/home/ken/gx-exome/nextflow
 REPO=/home/ken/gx-nipt
 REF_DIR=${REPO}/refs
+export PATH="${REPO}/bin/nxf-docker:${PATH}"
 LABCODE=ucl_batch_0511
 WORK_DIR=test_ucl_gxcnv2
 

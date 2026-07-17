@@ -2137,6 +2137,18 @@ def create_prizm_summary_report(sample_name, results, output_dir, trisomy_result
         logger.error(f"Error creating PRIZM summary report: {e}")
 
 
+def _prizm_gender_prefix(gender_token: str) -> str:
+    """Map a gender token to PRIZM reference CSV prefix (male/female).
+
+    Accepts tokens from nipt_pipeline ('M'/'F'), gender.txt (XY/XX), or
+    canonical names (MALE/FEMALE).
+    """
+    g = (gender_token or "").strip().upper()
+    if g in ("MALE", "M", "XY"):
+        return "male"
+    return "female"
+
+
 def run_multiple_prizm_analysis(
     sample_name, gender, labcode, config, analysis_dir, data_dir
 ):
@@ -2149,7 +2161,7 @@ def run_multiple_prizm_analysis(
 
     Args:
         sample_name: Sample identifier
-        gender: Gender determined from fetal fraction ('MALE' or 'FEMALE')
+        gender: Gender from fetal fraction ('M'/'F' or 'MALE'/'FEMALE')
         labcode: Laboratory code for reference files
         config: Configuration dictionary
         analysis_dir: Analysis directory path
@@ -2164,7 +2176,7 @@ def run_multiple_prizm_analysis(
     )
 
     # Determine gender prefix for reference files
-    gender_prefix = "male" if gender == "MALE" else "female"
+    gender_prefix = _prizm_gender_prefix(gender)
 
     # Create PRIZM output directory
     hmmcopy_output_dir = f"{analysis_dir}/{sample_name}/Output_hmmcopy"
@@ -2693,45 +2705,41 @@ def run_prizm_analysis(
 #  reference files from a flat ref-dir based on the gender parsed
 #  from the FF/gender file and then delegates to run_prizm_analysis().
 # =========================================================
-def _parse_gender_from_file(path: str, default: str = "female") -> str:
-    """Return 'male' or 'female' prefix from a gender.txt / fetal_fraction.txt file.
-
-    Expected formats:
-      - gender.txt  (preferred): contains a line `final_gender\t<MALE|FEMALE>`
-      - fetal_fraction.txt      : no gender — raises ValueError
-
-    Also accepts lowercase/mixed case and karyotype notation (XY/XX).
-    When final_gender is UNKNOWN (low FF sample), falls back to *default* ('female').
-    Returns 'male' or 'female'.
-    """
+def _prizm_gender_prefix_from_file(path: str) -> str:
+    """Parse gender.txt and select male/female PRIZM reference CSVs."""
     if not path or not os.path.exists(path):
         raise ValueError(f"Gender file not found: {path}")
 
+    gender_mf = None
     with open(path) as fh:
         for line in fh:
             line = line.strip()
-            if not line:
+            if not line or line.lower().startswith("value"):
                 continue
-            # final_gender<TAB>MALE|FEMALE  (or karyotype XY|XX written by ff_gender_improved.py)
-            # File may have 2 or 3 columns: "final_gender\tXX" or "final_gender\tXX\tXX"
-            if line.lower().startswith("final_gender"):
-                parts = re.split(r"[\t]+", line)
-                if len(parts) >= 2:
-                    val = parts[1].strip().upper()
-                    if val in ("MALE", "M", "XY"):
-                        return "male"
-                    if val in ("FEMALE", "F", "XX"):
-                        return "female"
-                    if val in ("UNKNOWN", "NA", "N/A", ""):
-                        logger.warning(
-                            f"final_gender is '{val}' in {path} (low FF sample?). "
-                            f"Defaulting to '{default}' for PRIZM reference selection."
-                        )
-                        return default
-    raise ValueError(
-        f"Could not parse final_gender from {path}. "
-        "Expected a line like 'final_gender\\tMALE' or 'final_gender\\tFEMALE' (or XY/XX)."
+            parts = re.split(r"[\t]+", line)
+            key = parts[0].strip()
+            # Prefer gd_2 (same source as ken-nipt yff2_result['gd_2_gender'])
+            if key == "gd_2" and len(parts) >= 3:
+                g = parts[2].strip().upper()
+                gender_mf = "M" if g in ("XY", "M", "MALE") else "F"
+                break
+            if key.lower() == "final_gender" and len(parts) >= 2 and gender_mf is None:
+                g = parts[1].strip().upper()
+                if g in ("UNKNOWN", "NA", "N/A", ""):
+                    gender_mf = "F"
+                else:
+                    gender_mf = "M" if g in ("XY", "M", "MALE") else "F"
+
+    if gender_mf is None:
+        raise ValueError(
+            f"Could not parse gd_2/final_gender from {path} for PRIZM reference selection."
+        )
+
+    prefix = _prizm_gender_prefix(gender_mf)
+    logger.info(
+        f"[PRIZM adapter] gender token={gender_mf!r} -> ref prefix={prefix!r}"
     )
+    return prefix
 
 
 def _nf_main():
@@ -2796,13 +2804,13 @@ def _nf_main():
         sys.exit(2)
 
     try:
-        gender_prefix = _parse_gender_from_file(gender_src)
+        gender_prefix = _prizm_gender_prefix_from_file(gender_src)
     except ValueError as e:
         logger.error(str(e))
         sys.exit(2)
 
     logger.info(
-        f"[PRIZM adapter] {args.sample}/{args.group} gender={gender_prefix}"
+        f"[PRIZM adapter] {args.sample}/{args.group} gender_prefix={gender_prefix}"
     )
 
     cfg = {}
@@ -2867,8 +2875,24 @@ def _nf_main():
         logger.error("[PRIZM adapter] run_prizm_analysis returned None")
         sys.exit(1)
 
+    # Save Z-score matrices (ken-nipt run_multiple_prizm_analysis parity)
+    save_zscore_results(
+        results.zscore_chr,
+        f"{outdir}/{args.sample}_{args.group}.prizm.zscore.txt",
+    )
+    save_zscore_results(
+        results.zscore_10mb,
+        f"{outdir}/{args.sample}_{args.group}.prizm.zscore.10mb.txt",
+    )
+    if enable_10mb_all and results.zscore_10mb_all is not None:
+        save_zscore_results(
+            results.zscore_10mb_all,
+            f"{outdir}/{args.sample}_{args.group}.prizm.zscore.10mb_all.txt",
+        )
+
+    trisomy_results = None
     try:
-        run_statistical_trisomy_detection(
+        trisomy_results = run_statistical_trisomy_detection(
             results.zscore_chr, outdir, f"{args.sample}_{args.group}"
         )
     except Exception as e:
@@ -2878,7 +2902,7 @@ def _nf_main():
 
     try:
         create_prizm_summary_report(
-            f"{args.sample}_{args.group}", results, outdir
+            f"{args.sample}_{args.group}", results, outdir, trisomy_results
         )
     except Exception as e:
         logger.warning(f"[PRIZM adapter] Summary report skipped: {e}")

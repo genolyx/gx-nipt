@@ -243,6 +243,7 @@ workflow {
         ch_proper_bam = ALIGN_WORKFLOW.out.proper_bam
         ch_proper_bai = ALIGN_WORKFLOW.out.proper_bai
         ch_bam_trio   = ALIGN_WORKFLOW.out.bam_trio
+        ch_of_orig    = ALIGN_WORKFLOW.out.of_orig
 
         // ── QC (parallel with alignment output) ───────────
         QC_WORKFLOW(
@@ -268,6 +269,7 @@ workflow {
             analysisdir
         )
         ch_bam_trio  = SAMTOOLS_SPLIT_FETUS_MOM.out.trio
+        ch_of_orig   = SAMTOOLS_SPLIT_FETUS_MOM.out.of_orig
 
         // No QC re-run in algorithm_only mode — stage a sentinel so the
         // report collector still fires exactly once.
@@ -275,8 +277,10 @@ workflow {
     }
 
     // ── HMMcopy (orig / fetus / mom) ──────────────────────
+    // orig 50kb ← proper_paired; orig 10mb (PRIZM) ← of_orig.bam (ken-nipt).
     HMMCOPY_WORKFLOW(
         ch_bam_trio,
+        ch_of_orig,
         labcode,
         analysisdir
     )

@@ -381,6 +381,9 @@ echo "[run_nipt] cmd=${NEXTFLOW_BIN} ${NF_ARGS[*]}"
 
 pushd "$REPO_DIR" >/dev/null
 
+# Use order-id-based Docker container names (see bin/nxf-docker/docker)
+export PATH="${REPO_DIR}/bin/nxf-docker:${PATH}"
+
 # -----------------------------------------------------------
 # Execute Nextflow
 # -----------------------------------------------------------

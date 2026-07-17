@@ -116,7 +116,7 @@ process SAMTOOLS_PROPER_PAIRED {
 /*
  * TLEN-based split: proper_paired.bam → of_orig / of_fetus / of_mom
  *
- *   of_orig    : proper_paired.bam을 그대로 재사용 (alias)
+ *   of_orig    : proper_paired.bam → Uniform_2017_allY.bed (-L) 필터
  *   of_fetus   : abs(tlen) <  160   (short cfDNA – 태아 유래 우세)
  *   of_mom     : abs(tlen) >  184   (long cfDNA  – 모체 유래 우세)
  *
@@ -138,9 +138,9 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
         val  analysisdir
 
     output:
-        // trio "orig" slot = proper_paired.bam, matching ken-nipt's WCX/HMMcopy input.
-        // of_orig.bam is still produced (published to analysisdir) and used as the
-        // base for fetus/mom TLEN-splitting, but NOT passed downstream in the trio.
+        // trio "orig" slot = proper_paired.bam (ken-nipt WC/WCX/EZD/FF orig path).
+        // of_orig.bam is published separately for PRIZM orig 10mb HMMcopy and is the
+        // base for fetus/mom TLEN-splitting.
         tuple val(sample_name),
               path("${sample_name}.proper_paired.bam"), path("${sample_name}.proper_paired.bam.bai"),
               path("${sample_name}.of_fetus.bam"),      path("${sample_name}.of_fetus.bam.bai"),
