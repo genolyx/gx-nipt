@@ -2,7 +2,8 @@
 .nextflow/
 .nextflow.log*
 work/
-work-benchmark_fastq*/
+work-benchmark_*/
+work-test_*/
 results/
 tmp/
 

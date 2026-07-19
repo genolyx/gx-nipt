@@ -24,7 +24,7 @@ process PICARD_MARKDUP {
         path "${sample_name}.dedup.metrics", emit: metrics
 
     script:
-        def picard_mem = "20G"
+        def picard_mem = params.picard_memory ?: "20G"
         def picard_jar = "/Work/NIPT/bin/picard/picard.jar"
         """
         set -euo pipefail

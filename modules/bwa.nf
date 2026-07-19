@@ -29,9 +29,10 @@ process BWA_ALIGN {
     script:
         def r1 = fastq_pair[0]
         def r2 = fastq_pair[1]
-        def threads     = params.max_cpus ?: 24
-        def sort_threads = Math.max(1, threads.toInteger() - 1)
-        def ref_genome  = "${params.ref_dir}/genomes/hg19/hg19.fa"
+        def threads      = params.max_cpus ?: 24
+        def sort_threads = params.samtools_threads ?: Math.max(1, threads.toInteger() - 1)
+        def sort_mem     = params.samtools_memory ?: '2G'
+        def ref_genome   = "${params.ref_dir}/genomes/hg19/hg19.fa"
         """
         set -euo pipefail
 
@@ -44,7 +45,7 @@ process BWA_ALIGN {
             2> ${sample_name}.bwa.log \\
         | samtools sort \\
             -@ ${sort_threads} \\
-            -m 2G \\
+            -m ${sort_mem} \\
             -o ${sample_name}.sorted.bam \\
             -T ${sample_name}.sort_tmp -
 
