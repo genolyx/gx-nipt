@@ -41,6 +41,7 @@ workflow ALIGN_WORKFLOW {
                 idx.exists() ? idx : null
             }
             ch_use_ssd_result = false
+            ch_sorted_bam     = ch_proper_bam   // no pre-dedup BAM available; fall back
 
         } else {
             // ── Case 2: Full alignment pipeline ───────────
@@ -140,6 +141,7 @@ workflow ALIGN_WORKFLOW {
     emit:
         proper_bam = ch_proper_bam
         proper_bai = ch_proper_bai
+        sorted_bam = ch_sorted_bam   // pre-dedup BAM for qualimap
         bam_trio   = SAMTOOLS_SPLIT_FETUS_MOM.out.trio
         of_orig    = SAMTOOLS_SPLIT_FETUS_MOM.out.of_orig
 }

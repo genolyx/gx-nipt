@@ -245,10 +245,13 @@ workflow {
         ch_of_orig    = ALIGN_WORKFLOW.out.of_orig
 
         // ── QC (parallel with alignment output) ───────────
+        // Qualimap runs on the pre-dedup sorted BAM (matching ken-nipt behaviour)
+        // so that total_reads / mapping_rate / duplication_rate reflect the raw
+        // sequencing output rather than the post-filter proper_paired BAM.
         QC_WORKFLOW(
             sample_name,
             ch_fastq,
-            ch_proper_bam,
+            ALIGN_WORKFLOW.out.sorted_bam,
             ch_config,
             analysisdir
         )
@@ -396,9 +399,9 @@ workflow {
     // ─────────────────────────────────────────────────────────
     // Workflow completion handler
     // ─────────────────────────────────────────────────────────
-    workflow.onComplete {
-    def status       = workflow.success ? "SUCCESS" : "FAILED"
-    def duration     = workflow.duration
+    workflow.onComplete { wf ->
+    def status       = wf.success ? "SUCCESS" : "FAILED"
+    def dur          = wf.duration
     def gxff_status  = params.gxff_model  ? "ENABLED (${params.gxff_model})"                                          : "DISABLED (seqFF only)"
     def gxcnv_status  = params.run_gxcnv  ? "ENABLED (auto: ${params.ref_dir}/labs/${params.labcode}/GXCNV/{sex}/)" : "DISABLED"
     def gxcnv2_status = params.run_gxcnv2 ? "ENABLED (WCX ref: ${params.ref_dir}/labs/${params.labcode}/WCX/, zscore=${params.gxcnv2_zscore})" : "DISABLED"
@@ -465,7 +468,7 @@ workflow {
     ║  gx-nipt Pipeline Completed                         ║
     ║  Sample    : ${params.sample_name}
     ║  Status    : ${status}
-    ║  Duration  : ${duration}
+    ║  Duration  : ${dur}
     ║  gx-FF     : ${gxff_status}
     ║  gx-cnv    : ${gxcnv_status}
     ║  gxcnv2    : ${gxcnv2_status}
@@ -473,12 +476,12 @@ workflow {
     ║  WC        : ${wc_status}
     ║  WCX       : ${wcx_status}
     ║  SSD       : ${ssd_status}
-    ║  Work Dir  : ${workflow.workDir}
+    ║  Work Dir  : ${wf.workDir}
     ╚══════════════════════════════════════════════════════╝
     """.stripIndent()
     }
-    workflow.onError {
-    log.error "Pipeline execution stopped with the following message: ${workflow.errorMessage}"
+    workflow.onError { wf ->
+    log.error "Pipeline execution stopped with the following message: ${wf.errorMessage}"
     // Safety cleanup: remove scratch dir even on failure
     if (params.use_ssd) {
         def scratchSample = new File("${params.scratch_dir}/${params.sample_name}")

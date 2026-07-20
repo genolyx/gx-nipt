@@ -93,6 +93,7 @@ Optional:
   --algorithm-only           Skip alignment; reuse existing BAM
   --force                    Re-run even if <order_id>.completed marker exists
   --fresh                    Clear any .nextflow/ resume cache for this sample
+  --no-resume                Skip -resume flag (re-run all steps, keep work/ cache intact)
   --gxff-model <.pkl>        Enable gx-FF (LightGBM + DNN) ensemble
                              (leave unset to fall back to seqFF-only)
   --run-gxcnv                Enable gx-cnv parallel CNV track
@@ -145,6 +146,7 @@ while [[ $# -gt 0 ]]; do
         --algorithm-only)    ALGORITHM_ONLY="true"; shift ;;
         --force|-f)          FORCE="true"; shift ;;
         --fresh)             FRESH="true"; shift ;;
+        --no-resume)         NO_RESUME="true"; shift ;;
         --gxff-model)        GXFF_MODEL="$2"; shift 2 ;;
         --no-gxcnv)          RUN_GXCNV="false"; shift ;;
         --run-gxcnv)         RUN_GXCNV="true"; shift ;;
@@ -345,6 +347,12 @@ NF_ARGS=(
     --outdir      "$HOST_OUTPUT_DIR"
     --analysisdir "$HOST_ANALYSIS_DIR"
 )
+
+# -resume: 이전 Nextflow work/ 캐시를 재활용 → 완료된 프로세스는 skip
+# --fresh / --no-resume 시에는 제외
+if [[ "$FRESH" != "true" && "$NO_RESUME" != "true" ]]; then
+    NF_ARGS+=( -resume )
+fi
 
 if [[ -n "$AGE" ]];       then NF_ARGS+=( --age "$AGE" ); fi
 if [[ -n "$FROM_BAM" ]];  then NF_ARGS+=( --from_bam "$FROM_BAM" ); fi

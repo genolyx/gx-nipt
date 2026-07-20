@@ -20,6 +20,7 @@ Output format (one key per line, tab-separated):
     mapping_rate            <float, percent>
     duplication_rate        <float, percent>
     mean_coverage           <float>
+    mean_mapping_quality    <float>
     gc_percentage           <float>
 
 Missing fields fall back to ``NA`` rather than aborting, so the QC filter
@@ -38,6 +39,7 @@ _PATTERNS = {
     "mapping_rate":           re.compile(r"number of mapped reads\s*=\s*[0-9,\.]+\s*\(([0-9\.]+)%\)"),
     "duplication_rate":       re.compile(r"duplication rate\s*=\s*([0-9\.]+)%?"),
     "mean_coverage":          re.compile(r"mean coverageData\s*=\s*([0-9\.Xx]+)"),
+    "mean_mapping_quality":   re.compile(r"mean mapping quality\s*=\s*([0-9\.]+)"),
     "gc_percentage":          re.compile(r"GC percentage\s*=\s*([0-9\.]+)%?"),
 }
 
@@ -89,6 +91,7 @@ def main() -> int:
         "mapping_rate",
         "duplication_rate",
         "mean_coverage",
+        "mean_mapping_quality",
         "gc_percentage",
     ]
     with open(args.output, "w") as fh:

@@ -2070,7 +2070,8 @@ def build_nipt_json(
                     "number_of_duplicated_reads": "duplicated_reads",  # 실제 파일명에 맞춤
                     "duplication_rate": "duplication_rate",
                     "mean_mapping_quality": "mean_mapping_quality",
-                    "mean_coverageData": "mean_coverage",
+                    "mean_coverage": "mean_coverage",
+                    "mean_coverageData": "mean_coverage",  # legacy key (ken-nipt format)
                     "gc_content": "gc_content",
                     "GC_content": "gc_content",  # legacy key
                 }
@@ -2243,19 +2244,6 @@ def build_nipt_json(
                     "unit": "%",
                     "status": seqff_status,
                     "threshold": f">{seqff_threshold}%",
-                },
-                "fetal_fraction_gxff": {
-                    "value": gxff_display_val,
-                    "unit": "%",
-                    "status": "INFO",
-                    "threshold": "N/A",
-                },
-                "fetal_fraction_ff_final": {
-                    "value": ff_final_display_val,
-                    "unit": "%",
-                    "status": "INFO",
-                    "threshold": "N/A",
-                    "source": ff_source_display,  # YFF2 (Male) or M-SeqFF (Female)
                 },
                 "ff_ratio": {
                     "value": ff_ratio_val,

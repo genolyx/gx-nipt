@@ -106,6 +106,12 @@ def main() -> int:
          "between"),
     ]
 
+    # Supplemental informational metrics (not counted toward overall fail_count)
+    supplemental = [
+        ("mean_coverage",       metrics.get("mean_coverage"),       ">0.1X"),
+        ("mean_mapping_quality", metrics.get("mean_mapping_quality"), ">20"),
+    ]
+
     fail_count = 0
     with open(args.output, "w") as fh:
         fh.write("sample_id\t{}\n".format(args.sample))
@@ -118,6 +124,9 @@ def main() -> int:
             fh.write(f"{name}\t{actual_s}\t{threshold_s}\t{cmp_s}\t{status}\n")
         overall = "PASS" if fail_count == 0 else "FAIL"
         fh.write(f"overall\t{fail_count}\tfail_count\t<=0\t{overall}\n")
+        for name, value, threshold_label in supplemental:
+            if value is not None and value != "NA":
+                fh.write(f"{name}\t{value}\t{threshold_label}\tinfo\tPASS\n")
 
     print(f"[qc_filter] {args.sample}: overall={overall} fail_count={fail_count}")
     return 0
