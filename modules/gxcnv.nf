@@ -259,8 +259,8 @@ process GXCNV_PREDICT {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_id}/gxcnv", mode: 'copy', pattern: "*.tsv", overwrite: true
-    publishDir "${analysisdir}/${sample_id}/gxcnv", mode: 'copy', pattern: "*.txt", overwrite: true
+    publishDir { "${analysisdir}/${sample_id}/gxcnv" }, mode: 'copy', pattern: "*.tsv", overwrite: true
+    publishDir { "${analysisdir}/${sample_id}/gxcnv" }, mode: 'copy', pattern: "*.txt", overwrite: true
 
     input:
     tuple val(sample_id), path(sample_npz)
@@ -361,7 +361,7 @@ process GXCNV_COMPARE {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_id}/gxcnv", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_id}/gxcnv" }, mode: 'copy', overwrite: true
 
     input:
     tuple val(sample_id),

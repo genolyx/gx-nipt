@@ -16,7 +16,7 @@ process CALCULATE_YFF {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_FF", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_FF" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -50,7 +50,7 @@ process CALCULATE_YFF2 {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_FF", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_FF" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -83,7 +83,7 @@ process CALCULATE_SEQFF {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_FF", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_FF" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -149,7 +149,7 @@ process CALCULATE_FRAGMENT_FF {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_FF", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_FF" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -186,7 +186,7 @@ process GENDER_DECISION {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_FF", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_FF" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name

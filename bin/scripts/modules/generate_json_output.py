@@ -225,11 +225,10 @@ def read_fetal_fraction_data(ff_path, gender_path):
         # 3. YFF 표시값 결정 (Female 샘플은 YFF 측정 불가 → N/A)
         yff: object = round(yff_raw, 4) if gender != "Female" else "N/A"
 
-        # 4. FF ratio 계산 (YFF_2 / SeqFF, Female은 N/A)
+        # 4. FF ratio 계산 (YFF_2 / M-SeqFF) — ken-nipt 와 동일
+        # Female 샘플도 YFF_2 원값으로 비율을 계산 (표시용 yff 는 N/A 유지)
         try:
-            if gender == "Female":
-                ff_ratio = "N/A"
-            elif seqff != 0 and isinstance(yff, float):
+            if seqff != 0:
                 ff_ratio = round(yff_raw / seqff, 2)
             else:
                 ff_ratio = 0.0
@@ -249,7 +248,14 @@ def read_fetal_fraction_data(ff_path, gender_path):
 
     except Exception as e:
         logger.error(f"General error in read_fetal_fraction_data: {e}")
-        return {"gender": "Unknown", "yff": 0.0, "seqff": 0.0, "ff_ratio": 0.0}
+        return {
+            "gender": "Unknown",
+            "yff": 0.0,
+            "seqff": 0.0,
+            "final_ff": 0.0,
+            "ff_source": "none",
+            "ff_ratio": 0.0,
+        }
 
 
 def read_sample_bias_qc(file_path):
@@ -1308,18 +1314,55 @@ def read_threshold_data(threshold_file_path):
 
 
 def read_qc_data(file_path):
-    """Read QC data with proper error handling"""
-    try:
-        df = safe_read_csv(file_path, sep="\t", header=None, index_col=0)
-        if df is None or df.empty:
-            logger.warning(f"QC file {file_path} is empty or could not be read")
-            return pd.DataFrame()  # 빈 DataFrame 반환
+    """Read QC data with proper error handling.
 
-        df.columns = ["value", "status"]
-        return df
+    Supports qc.filter.txt rows with 4 data columns:
+      <metric>  <value>  <threshold>  <operator>  <status>
+    and legacy 2-column rows: <metric>  <value>  <status>
+    """
+    try:
+        if not os.path.exists(file_path):
+            logger.warning(f"QC file {file_path} does not exist")
+            return pd.DataFrame()
+
+        records = {}
+        with open(file_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or "\t" not in line:
+                    continue
+
+                parts = line.split("\t")
+                key = parts[0].strip()
+                if key == "sample_id":
+                    continue
+
+                cols = [col.strip() for col in parts[1:]]
+                if len(cols) == 4:
+                    records[key] = {
+                        "value": cols[0],
+                        "threshold": cols[1],
+                        "operator": cols[2],
+                        "status": cols[3],
+                    }
+                elif len(cols) == 2:
+                    records[key] = {"value": cols[0], "status": cols[1]}
+                elif len(cols) == 1:
+                    records[key] = {"value": cols[0], "status": "PASS"}
+                else:
+                    records[key] = {
+                        "value": cols[0],
+                        "status": cols[-1] if cols else "UNKNOWN",
+                    }
+
+        if not records:
+            logger.warning(f"QC file {file_path} is empty or could not be parsed")
+            return pd.DataFrame()
+
+        return pd.DataFrame.from_dict(records, orient="index")
     except Exception as e:
         logger.error(f"Error reading QC data from {file_path}: {e}")
-        return pd.DataFrame()  # 빈 DataFrame 반환
+        return pd.DataFrame()
 
 
 # ==============================================================
@@ -2028,7 +2071,8 @@ def build_nipt_json(
                     "duplication_rate": "duplication_rate",
                     "mean_mapping_quality": "mean_mapping_quality",
                     "mean_coverageData": "mean_coverage",
-                    "GC_content": "gc_content",
+                    "gc_content": "gc_content",
+                    "GC_content": "gc_content",  # legacy key
                 }
 
                 for qc_key, json_key in qc_mapping.items():
@@ -2175,7 +2219,10 @@ def build_nipt_json(
             logger.info(f"seqff_status : {seqff_status}")
 
             ff_ratio_threshold = qc_config.get("FF_Ratio", 2.5)
-            ff_ratio_val = float(final_results["ff_ratio"])
+            try:
+                ff_ratio_val = float(final_results["ff_ratio"])
+            except (ValueError, TypeError):
+                ff_ratio_val = 0.0
             ff_ratio_status = "PASS" if ff_ratio_val < ff_ratio_threshold else "FAIL"
 
             if ff_ratio_status != "PASS":

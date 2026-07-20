@@ -17,7 +17,7 @@ process RUN_WC {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_WC/${group}", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_WC/${group}" }, mode: 'copy', overwrite: true
 
     input:
         tuple val(sample_name), val(group), path(bam), path(bai)
@@ -122,7 +122,7 @@ process RUN_WCX {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_WCX/${group}", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_WCX/${group}" }, mode: 'copy', overwrite: true
 
     input:
         tuple val(sample_name), val(group), path(bam), path(bai)

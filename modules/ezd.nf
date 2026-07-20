@@ -19,7 +19,7 @@ process RUN_EZD {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_EZD/${group}", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_EZD/${group}" }, mode: 'copy', overwrite: true
 
     input:
         tuple val(sample_name), val(group), path(norm_50kb)

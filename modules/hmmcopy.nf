@@ -20,7 +20,7 @@ process READCOUNTER {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_hmmcopy", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_hmmcopy" }, mode: 'copy', overwrite: true
 
     input:
         tuple val(sample_name), val(group), path(bam), path(bai)
@@ -56,7 +56,7 @@ process HMMCOPY_R {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_hmmcopy", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_hmmcopy" }, mode: 'copy', overwrite: true
 
     input:
         tuple val(sample_name), val(group), path(wig)

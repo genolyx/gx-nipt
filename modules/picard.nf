@@ -9,8 +9,8 @@ process PICARD_MARKDUP {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.dedup.*"
+    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "${params.sample_name}.dedup.*"
 
     input:
         val  sample_name

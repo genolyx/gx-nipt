@@ -9,8 +9,8 @@ process SAMTOOLS_SORT_INDEX {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.${suffix}.bam*"
+    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "${params.sample_name}.*.bam*"
 
     input:
         val  sample_name
@@ -47,8 +47,8 @@ process SAMTOOLS_FILTER_UNIQUE {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.unique.bam*"
+    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "${params.sample_name}.unique.bam*"
 
     input:
         val  sample_name
@@ -83,8 +83,8 @@ process SAMTOOLS_PROPER_PAIRED {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.proper_paired.bam*"
+    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "${params.sample_name}.proper_paired.bam*"
 
     input:
         val  sample_name
@@ -128,8 +128,8 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.of_*.bam*"
+    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "${params.sample_name}.of_*.bam*"
 
     input:
         val  sample_name

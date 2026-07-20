@@ -50,8 +50,13 @@ FORCE="false"
 FRESH="false"
 GXFF_MODEL=""
 RUN_GXCNV="false"
+RUN_GXCNV1=""              # empty = use main.nf default (true)
 RUN_GXCNV2="true"          # gxcnv2 enabled by default (matches main.nf default)
 GXCNV2_ZSCORE=""           # empty = use main.nf default (3.5)
+MAX_CPUS=""
+SAMTOOLS_THREADS=""
+SAMTOOLS_MEMORY=""
+PICARD_MEMORY=""
 RUN_WCX="true"
 RUN_WC="true"
 
@@ -93,8 +98,16 @@ Optional:
   --run-gxcnv                Enable gx-cnv parallel CNV track
                              Reference auto-resolved by gender:
                                <ref-dir>/labs/<labcode>/GXCNV/{female|male}/reference.npz
-  --no-gxcnv2                Disable gxcnv2 (enabled by default)
+  --no-gxcnv                 Disable gx-cnv (default)
+  --run-gxcnv1               Enable gxcnv1 / WisecondorX CNV track
+  --no-gxcnv1                Disable gxcnv1
+  --run-gxcnv2               Enable gxcnv2 (default: enabled)
+  --no-gxcnv2                Disable gxcnv2
   --gxcnv2-zscore <float>    Z-score threshold for gxcnv2 calling (default: 3.5)
+  --max-cpus <n>             Max CPUs per task (default: 32)
+  --samtools-threads <n>     samtools sort threads (default: max_cpus-1)
+  --samtools-memory <size>   samtools sort memory per thread (default: 2G)
+  --picard-memory <size>     Picard MarkDuplicates heap size (default: 20G)
   --no-wcx                   Disable WisecondorX (once gx-cnv is validated)
   --use-ssd                  Enable SSD scratch (Strategy B)
   --scratch-dir <path>       SSD mount point (default: /tmp/nipt_scratch)
@@ -133,7 +146,12 @@ while [[ $# -gt 0 ]]; do
         --force|-f)          FORCE="true"; shift ;;
         --fresh)             FRESH="true"; shift ;;
         --gxff-model)        GXFF_MODEL="$2"; shift 2 ;;
+        --no-gxcnv)          RUN_GXCNV="false"; shift ;;
         --run-gxcnv)         RUN_GXCNV="true"; shift ;;
+        --run-gxcnv1)        RUN_GXCNV1="true"; shift ;;
+        --no-gxcnv1)         RUN_GXCNV1="false"; shift ;;
+        --run-gxcnv2)        RUN_GXCNV2="true"; shift ;;
+        --no-gxcnv2)         RUN_GXCNV2="false"; shift ;;
         --gxcnv-reference|--gxcnv-model)
                              echo "[run_nipt] --gxcnv-reference is deprecated; use --run-gxcnv (reference auto-resolved by gender)" >&2
                              RUN_GXCNV="true"; shift 2 ;;
@@ -144,6 +162,10 @@ while [[ $# -gt 0 ]]; do
         --use-ssd)           USE_SSD="true"; shift ;;
         --scratch-dir)       SCRATCH_DIR="$2"; shift 2 ;;
         --ssd-max-usage-gb)  SSD_MAX_USAGE_GB="$2"; shift 2 ;;
+        --max-cpus)          MAX_CPUS="$2"; shift 2 ;;
+        --samtools-threads)  SAMTOOLS_THREADS="$2"; shift 2 ;;
+        --samtools-memory)   SAMTOOLS_MEMORY="$2"; shift 2 ;;
+        --picard-memory)     PICARD_MEMORY="$2"; shift 2 ;;
         --ref-dir)           REF_DIR="$2"; shift 2 ;;
         --nextflow)          NEXTFLOW_BIN="$2"; shift 2 ;;
         -h|--help)           usage 0 ;;
@@ -330,12 +352,20 @@ if [[ -n "$FASTQ_R1_NAME" ]]; then NF_ARGS+=( --fastq_r1 "$FASTQ_R1_NAME" --fast
 if [[ "$ALGORITHM_ONLY" == "true" ]]; then NF_ARGS+=( --algorithm_only true ); fi
 if [[ "$FORCE" == "true" ]];          then NF_ARGS+=( --force true ); fi
 if [[ -n "$GXFF_MODEL" ]];       then NF_ARGS+=( --gxff_model "$GXFF_MODEL" ); fi
-if [[ "$RUN_GXCNV" == "true" ]];  then NF_ARGS+=( --run_gxcnv true ); fi
+if [[ "$RUN_GXCNV" == "true" ]];   then NF_ARGS+=( --run_gxcnv true ); fi
+if [[ "$RUN_GXCNV" == "false" ]];  then NF_ARGS+=( --run_gxcnv false ); fi
+if [[ "$RUN_GXCNV1" == "true" ]];  then NF_ARGS+=( --run_gxcnv1 true ); fi
+if [[ "$RUN_GXCNV1" == "false" ]]; then NF_ARGS+=( --run_gxcnv1 false ); fi
+if [[ "$RUN_GXCNV2" == "true" ]];  then NF_ARGS+=( --run_gxcnv2 true ); fi
 if [[ "$RUN_GXCNV2" == "false" ]]; then NF_ARGS+=( --run_gxcnv2 false ); fi
-if [[ -n "$GXCNV2_ZSCORE" ]];     then NF_ARGS+=( --gxcnv2_zscore "$GXCNV2_ZSCORE" ); fi
-if [[ "$RUN_WCX" == "false" ]];   then NF_ARGS+=( --run_wcx false ); fi
-if [[ "$RUN_WC" == "false" ]];    then NF_ARGS+=( --run_wc false ); fi
-if [[ -n "$REF_DIR" ]];          then NF_ARGS+=( --ref_dir "$REF_DIR" ); fi
+if [[ -n "$GXCNV2_ZSCORE" ]];      then NF_ARGS+=( --gxcnv2_zscore "$GXCNV2_ZSCORE" ); fi
+if [[ "$RUN_WCX" == "false" ]];    then NF_ARGS+=( --run_wcx false ); fi
+if [[ "$RUN_WC" == "false" ]];     then NF_ARGS+=( --run_wc false ); fi
+if [[ -n "$MAX_CPUS" ]];           then NF_ARGS+=( --max_cpus "$MAX_CPUS" ); fi
+if [[ -n "$SAMTOOLS_THREADS" ]];   then NF_ARGS+=( --samtools_threads "$SAMTOOLS_THREADS" ); fi
+if [[ -n "$SAMTOOLS_MEMORY" ]];    then NF_ARGS+=( --samtools_memory "$SAMTOOLS_MEMORY" ); fi
+if [[ -n "$PICARD_MEMORY" ]];      then NF_ARGS+=( --picard_memory "$PICARD_MEMORY" ); fi
+if [[ -n "$REF_DIR" ]];            then NF_ARGS+=( --ref_dir "$REF_DIR" ); fi
 
 # -----------------------------------------------------------
 # Reference-directory preflight

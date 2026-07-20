@@ -23,7 +23,7 @@ process GENERATE_JSON {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_Result", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_Result" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -74,7 +74,7 @@ process GENERATE_HTML {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_Result", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_Result" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name

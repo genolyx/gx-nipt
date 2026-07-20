@@ -9,7 +9,7 @@ process FASTQC {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_QC", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_QC" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name

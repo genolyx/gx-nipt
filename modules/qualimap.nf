@@ -9,7 +9,7 @@ process QUALIMAP {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_QC", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_QC" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -62,7 +62,7 @@ process QC_FILTER {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_QC", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_QC" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name

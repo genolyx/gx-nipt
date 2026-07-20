@@ -76,7 +76,7 @@ process GXFF_ENSEMBLE {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_id}/Output_FF", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_id}/Output_FF" }, mode: 'copy', overwrite: true
 
     input:
     tuple val(sample_id), path(seqff_tsv), path(gxff_tsv)

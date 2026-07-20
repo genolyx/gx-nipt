@@ -9,7 +9,7 @@ process RUN_MD_DETECTION {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_MD", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_MD" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name

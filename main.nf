@@ -208,16 +208,15 @@ workflow {
         // <root_dir>/fastq/<work_dir>/<sample>/) *or* full host paths when
         // reads live outside root_dir (e.g. ken-nipt). Do not join absolute paths.
         def fastq_dir = "${root_dir}/fastq/${work_dir}/${sample_name}"
-        def resolve_fq = { p ->
-            def s = p as String
-            (new File(s).isAbsolute()
-                ? file(s, checkIfExists: true)
-                : file("${fastq_dir}/${s}", checkIfExists: true))
-        }
-        ch_fastq = Channel.of([
-            resolve_fq(params.fastq_r1),
-            resolve_fq(params.fastq_r2)
-        ])
+        def fq_r1_s = params.fastq_r1 as String
+        def fq_r2_s = params.fastq_r2 as String
+        def fq_r1 = (new File(fq_r1_s).isAbsolute()
+            ? file(fq_r1_s, checkIfExists: true)
+            : file("${fastq_dir}/${fq_r1_s}", checkIfExists: true))
+        def fq_r2 = (new File(fq_r2_s).isAbsolute()
+            ? file(fq_r2_s, checkIfExists: true)
+            : file("${fastq_dir}/${fq_r2_s}", checkIfExists: true))
+        ch_fastq = Channel.of([fq_r1, fq_r2])
         ch_bam = Channel.empty()
     }
 
@@ -393,12 +392,11 @@ workflow {
         FF_GENDER_WORKFLOW.out.ff_ensemble,  // ensures GXFF_ENSEMBLE finishes before report
         ch_gxcnv2_calls                      // ensures all GXCNV2_PREDICT publishDir copies finish
     )
-}
 
-// ─────────────────────────────────────────────────────────
-// Workflow completion handler
-// ─────────────────────────────────────────────────────────
-workflow.onComplete {
+    // ─────────────────────────────────────────────────────────
+    // Workflow completion handler
+    // ─────────────────────────────────────────────────────────
+    workflow.onComplete {
     def status       = workflow.success ? "SUCCESS" : "FAILED"
     def duration     = workflow.duration
     def gxff_status  = params.gxff_model  ? "ENABLED (${params.gxff_model})"                                          : "DISABLED (seqFF only)"
@@ -478,8 +476,8 @@ workflow.onComplete {
     ║  Work Dir  : ${workflow.workDir}
     ╚══════════════════════════════════════════════════════╝
     """.stripIndent()
-}
-workflow.onError {
+    }
+    workflow.onError {
     log.error "Pipeline execution stopped with the following message: ${workflow.errorMessage}"
     // Safety cleanup: remove scratch dir even on failure
     if (params.use_ssd) {
@@ -504,5 +502,6 @@ workflow.onError {
                 }
             }
         }
+    }
     }
 }

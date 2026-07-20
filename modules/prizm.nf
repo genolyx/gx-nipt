@@ -13,7 +13,7 @@ process RUN_PRIZM {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}/Output_PRIZM/${group}", mode: 'copy', overwrite: true
+    publishDir { "${analysisdir}/${sample_name}/Output_PRIZM/${group}" }, mode: 'copy', overwrite: true
 
     input:
         tuple val(sample_name), val(group), path(count_10mb)

@@ -9,8 +9,8 @@ process BWA_ALIGN {
     label 'process_high'
     label 'nipt_docker'
 
-    publishDir "${analysisdir}/${sample_name}", mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.sorted.bam*"
+    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "${params.sample_name}.sorted.bam*"
 
     input:
         val  sample_name
@@ -29,8 +29,8 @@ process BWA_ALIGN {
     script:
         def r1 = fastq_pair[0]
         def r2 = fastq_pair[1]
-        def threads      = params.max_cpus ?: 24
-        def sort_threads = params.samtools_threads ?: Math.max(1, threads.toInteger() - 1)
+        def threads      = task.cpus
+        def sort_threads = params.samtools_threads ? params.samtools_threads.toInteger() : Math.max(1, threads - 1)
         def sort_mem     = params.samtools_memory ?: '2G'
         def ref_genome   = "${params.ref_dir}/genomes/hg19/hg19.fa"
         """
