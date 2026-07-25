@@ -149,13 +149,26 @@ RUN /opt/conda/envs/nipt/bin/pip install \
     scikit-learn==1.4.2 \
     plotly \
     pandas==2.2.2 \
-    matplotlib==3.8.4 \
     pysam==0.22.0 \
     typer \
     loguru
 
 RUN /opt/conda/envs/nipt/bin/pip install -U git+https://github.com/CenterForMedicalGeneticsGhent/WisecondorX && \
     /opt/conda/envs/nipt/bin/wisecondorx --help || echo "WisecondorX installed"
+
+# Patch WisecondorX plotter.py: boxplot(labels=) was removed in matplotlib 3.9+.
+# Replace with tick_labels= (introduced in matplotlib 3.9) so we can use the
+# version of matplotlib that pip resolves rather than pinning an old one.
+RUN /opt/conda/envs/nipt/bin/python3 - <<'PYEOF'
+import wisecondorx, os
+path = os.path.join(os.path.dirname(wisecondorx.__file__), 'plotter.py')
+txt = open(path).read()
+patched = txt.replace('        labels=labels[:22],', '        tick_labels=labels[:22],') \
+             .replace('        labels=labels[22:],', '        tick_labels=labels[22:],')
+assert patched != txt, "Patch had no effect – check plotter.py content"
+open(path, 'w').write(patched)
+print(f"Patched {path}: labels= -> tick_labels= (matplotlib>=3.9 compat)")
+PYEOF
 
 # CBS.R is the R script called by WisecondorX for circular binary segmentation.
 # The pip-installed wheel omits the include/ package data directory, so we copy
