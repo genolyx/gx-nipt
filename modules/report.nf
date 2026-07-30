@@ -155,6 +155,7 @@ process COPY_TO_OUTPUT {
         mkdir -p ${outdir}/Output_hmmcopy
         mkdir -p ${outdir}/Output_MD
         mkdir -p ${outdir}/Output_Result
+        mkdir -p ${outdir}/gxcnv1
         mkdir -p ${outdir}/gxcnv2
 
         # Copy analysis results to output directory
@@ -167,7 +168,16 @@ process COPY_TO_OUTPUT {
         _copy ${analysisdir}/${sample_name}/Output_WCX     ${outdir}/Output_WCX
         _copy ${analysisdir}/${sample_name}/Output_hmmcopy ${outdir}/Output_hmmcopy
         _copy ${analysisdir}/${sample_name}/Output_MD      ${outdir}/Output_MD
+        _copy ${analysisdir}/${sample_name}/gxcnv1         ${outdir}/gxcnv1
         _copy ${analysisdir}/${sample_name}/gxcnv2         ${outdir}/gxcnv2
+
+        # Inject gxcnv1/2 into Portal WC/WCX flat filenames (same names/formats).
+        # Nested Output_WC/{group}/ originals are left for MD; Portal buttons
+        # open the flat paths written here.
+        python3 ${projectDir}/bin/scripts/modules/portal_cnv_alias.py \\
+            --sample ${sample_name} \\
+            --analysis-dir ${analysisdir} \\
+            --outdir ${outdir}
 
         # Copy final report
         cp ${json_file} ${outdir}/Output_Result/

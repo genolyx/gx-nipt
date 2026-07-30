@@ -59,6 +59,7 @@ SAMTOOLS_MEMORY=""
 PICARD_MEMORY=""
 RUN_WCX="true"
 RUN_WC="true"
+NO_RESUME="false"
 
 # SSD scratch
 USE_SSD="false"
@@ -92,8 +93,8 @@ Optional:
   --from-bam <path>          Start from existing proper_paired BAM
   --algorithm-only           Skip alignment; reuse existing BAM
   --force                    Re-run even if <order_id>.completed marker exists
-  --fresh                    Clear any .nextflow/ resume cache for this sample
-  --no-resume                Skip -resume flag (re-run all steps, keep work/ cache intact)
+  --fresh                    Clear this sample's work/ + session (safe for concurrent runs)
+  --no-resume                Skip -resume (re-run all steps; keep per-sample work/ intact)
   --gxff-model <.pkl>        Enable gx-FF (LightGBM + DNN) ensemble
                              (leave unset to fall back to seqFF-only)
   --run-gxcnv                Enable gx-cnv parallel CNV track
@@ -328,11 +329,24 @@ fi
 progress "PREPARED" "5" "inputs ready under ${HOST_FASTQ_DIR}"
 
 # -----------------------------------------------------------
-# Fresh run: purge Nextflow resume state for this sample
+# Per-sample Nextflow isolation (required for concurrent runs)
+#
+# Bare `-resume` resumes the *latest* session under REPO_DIR/.nextflow,
+# so concurrent samples collide on the same session LOCK.
+# Isolate work + session UUID + nextflow.log per sample instead.
 # -----------------------------------------------------------
+NF_WORK_DIR="${HOST_ANALYSIS_DIR}/work"
+NF_SESSION_FILE="${HOST_LOG_DIR}/nextflow.session"
+NF_LOG_FILE="${HOST_LOG_DIR}/nextflow.log"
+mkdir -p "$NF_WORK_DIR" "$HOST_LOG_DIR"
+
+# Fresh run: purge *this sample's* work/session only — never wipe
+# REPO_DIR/.nextflow (shared history used by other concurrent samples).
 if [[ "$FRESH" == "true" ]]; then
-    rm -rf "${REPO_DIR}/.nextflow" "${REPO_DIR}/work" 2>/dev/null || true
-    echo "[run_nipt] Fresh: cleared .nextflow/ and work/"
+    rm -rf "$NF_WORK_DIR"
+    rm -f "$NF_SESSION_FILE" "$NF_LOG_FILE"
+    mkdir -p "$NF_WORK_DIR"
+    echo "[run_nipt] Fresh: cleared per-sample work/ + session (${SAMPLE_NAME})"
 fi
 
 # -----------------------------------------------------------
@@ -346,12 +360,20 @@ NF_ARGS=(
     --work_dir    "$WORK_DIR"
     --outdir      "$HOST_OUTPUT_DIR"
     --analysisdir "$HOST_ANALYSIS_DIR"
+    -w            "$NF_WORK_DIR"
+    -log          "$NF_LOG_FILE"
 )
 
-# -resume: 이전 Nextflow work/ 캐시를 재활용 → 완료된 프로세스는 skip
-# --fresh / --no-resume 시에는 제외
-if [[ "$FRESH" != "true" && "$NO_RESUME" != "true" ]]; then
-    NF_ARGS+=( -resume )
+# Resume only this sample's previous session UUID (if any).
+# First run / --fresh / --no-resume → new session (safe for concurrency).
+if [[ "$FRESH" != "true" && "$NO_RESUME" != "true" && -s "$NF_SESSION_FILE" ]]; then
+    SESSION_ID="$(tr -d '[:space:]' < "$NF_SESSION_FILE")"
+    if [[ "$SESSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+        NF_ARGS+=( -resume "$SESSION_ID" )
+        echo "[run_nipt] Resuming sample session: $SESSION_ID"
+    else
+        echo "[run_nipt] WARNING: invalid session id in $NF_SESSION_FILE — starting new session" >&2
+    fi
 fi
 
 if [[ -n "$AGE" ]];       then NF_ARGS+=( --age "$AGE" ); fi
@@ -430,6 +452,21 @@ set +e
 NF_EXIT=$?
 set -e
 
+# Persist this run's session UUID so a later re-run of *this sample*
+# can `-resume <uuid>` without grabbing another sample's session.
+if [[ -f "$NF_LOG_FILE" ]]; then
+    NEW_SESSION="$(
+        grep -E 'Session UUID:' "$NF_LOG_FILE" 2>/dev/null \
+            | tail -1 \
+            | sed -E 's/.*Session UUID:[[:space:]]*([0-9a-fA-F-]{36}).*/\1/' \
+            || true
+    )"
+    if [[ "$NEW_SESSION" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+        printf '%s\n' "$NEW_SESSION" > "$NF_SESSION_FILE"
+        echo "[run_nipt] Saved session UUID: $NEW_SESSION -> $NF_SESSION_FILE"
+    fi
+fi
+
 popd >/dev/null
 
 if [[ "$NF_EXIT" -ne 0 ]]; then
@@ -480,7 +517,9 @@ TAR_FILE="${HOST_OUTPUT_DIR}/${ORDER_ID}.output.tar"
     while IFS= read -r -d '' dir; do
         TAR_ITEMS+=( "$(basename "$dir")" )
     done < <(find . -maxdepth 1 -type d -name 'Output_*' -print0 2>/dev/null || true)
-    # Include gxcnv2 results directory if present
+    # Include gxcnv result directories if present (Portal uses Output_WC/WCX
+    # flat aliases; raw trees kept for internal review)
+    [[ -d "gxcnv1" ]] && TAR_ITEMS+=( "gxcnv1" )
     [[ -d "gxcnv2" ]] && TAR_ITEMS+=( "gxcnv2" )
     # Always include the JSON; HTML is under Output_Result/
     [[ -f "${ORDER_ID}.json" ]] && TAR_ITEMS+=( "${ORDER_ID}.json" )
