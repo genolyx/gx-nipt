@@ -189,7 +189,8 @@ workflow WC_WORKFLOW {
 
         // ── gxcnv2 (WCX-core, reuses RUN_WCX BED outputs — WCX result = gxcnv2) ──────
         // Wired directly to RUN_WCX; requires run_wcx=true.
-        ch_gxcnv2_calls = Channel.empty()
+        ch_gxcnv2_calls  = Channel.empty()
+        ch_gxcnv2_genome = Channel.empty()
 
         if ( run_gxcnv2 ) {
             if ( !params.run_wcx ) {
@@ -213,12 +214,15 @@ workflow WC_WORKFLOW {
                 ch_plot2_input = GXCNV2_PREDICT.out.bins_tsv
                     .join( GXCNV2_PREDICT.out.calls_tsv )
                 GXCNV2_PLOT( ch_plot2_input, analysisdir )
+                // Wait for publishDir of genome PNGs before COPY_TO_OUTPUT
+                ch_gxcnv2_genome = GXCNV2_PLOT.out.genome_png
             }
         }
 
         // ── gxcnv1 (WC-core, reuses RUN_WC NPZ outputs — WC result = gxcnv1) ───────
         // Wired directly to RUN_WC; requires run_wc=true.
-        ch_gxcnv1_calls = Channel.empty()
+        ch_gxcnv1_calls  = Channel.empty()
+        ch_gxcnv1_genome = Channel.empty()
 
         if ( run_gxcnv1 ) {
             if ( !params.run_wc ) {
@@ -243,6 +247,7 @@ workflow WC_WORKFLOW {
                 ch_plot1_input = GXCNV1_PREDICT.out.bins_tsv
                     .join( GXCNV1_PREDICT.out.calls_tsv )
                 GXCNV1_PLOT( ch_plot1_input, analysisdir )
+                ch_gxcnv1_genome = GXCNV1_PLOT.out.genome_png
             }
         }
 
@@ -253,4 +258,6 @@ workflow WC_WORKFLOW {
         gxcnv_comparison = ch_gxcnv_comparison
         gxcnv2_calls     = ch_gxcnv2_calls
         gxcnv1_calls     = ch_gxcnv1_calls
+        gxcnv2_genome    = ch_gxcnv2_genome
+        gxcnv1_genome    = ch_gxcnv1_genome
 }

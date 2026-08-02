@@ -352,6 +352,9 @@ fi
 # -----------------------------------------------------------
 # Build Nextflow command
 # -----------------------------------------------------------
+# NOTE: ``-log`` is a *global* nextflow option and must come *before* ``run``.
+# Placing it after ``run`` (as a run-option) fails on Nextflow 26+:
+#   Unknown option: -log
 NF_ARGS=(
     run "${REPO_DIR}/main.nf"
     --sample_name "$SAMPLE_NAME"
@@ -361,7 +364,6 @@ NF_ARGS=(
     --outdir      "$HOST_OUTPUT_DIR"
     --analysisdir "$HOST_ANALYSIS_DIR"
     -w            "$NF_WORK_DIR"
-    -log          "$NF_LOG_FILE"
 )
 
 # Resume only this sample's previous session UUID (if any).
@@ -437,7 +439,7 @@ NF_ARGS+=( --tracedir "$TRACE_DIR" )
 
 progress "RUN" "10" "nextflow run main.nf"
 echo "[run_nipt] cwd=$REPO_DIR"
-echo "[run_nipt] cmd=${NEXTFLOW_BIN} ${NF_ARGS[*]}"
+echo "[run_nipt] cmd=${NEXTFLOW_BIN} -log ${NF_LOG_FILE} ${NF_ARGS[*]}"
 
 pushd "$REPO_DIR" >/dev/null
 
@@ -448,7 +450,7 @@ export PATH="${REPO_DIR}/bin/nxf-docker:${PATH}"
 # Execute Nextflow
 # -----------------------------------------------------------
 set +e
-"$NEXTFLOW_BIN" "${NF_ARGS[@]}"
+"$NEXTFLOW_BIN" -log "$NF_LOG_FILE" "${NF_ARGS[@]}"
 NF_EXIT=$?
 set -e
 
@@ -507,6 +509,13 @@ fi
 
 cp -f "$RESULT_JSON_SRC" "${HOST_OUTPUT_DIR}/${ORDER_ID}.json"
 echo "[run_nipt] Copied result JSON -> ${HOST_OUTPUT_DIR}/${ORDER_ID}.json"
+
+# Ensure ken-nipt / Portal flat plot paths exist before tar (also re-syncs gxcnv*).
+python3 "${REPO_DIR}/bin/scripts/modules/portal_output_layout.py" \
+    --sample "${ORDER_ID}" \
+    --analysis-dir "${HOST_ANALYSIS_DIR}" \
+    --outdir "${HOST_OUTPUT_DIR}" \
+    || echo "[run_nipt] WARNING: portal_output_layout failed (continuing with existing tree)" >&2
 
 # Build tar (deterministic relative paths; skip if Output_* dirs missing)
 TAR_FILE="${HOST_OUTPUT_DIR}/${ORDER_ID}.output.tar"

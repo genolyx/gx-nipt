@@ -2,19 +2,18 @@
  * =========================================================
  *  Module: Report Generation & Output Copy
  *
- *  Portal-compatible output directory structure:
+ *  Portal-compatible output directory structure (ken-nipt flat plots):
  *    output/{work_dir}/{sample_name}/
  *      ├── Output_QC/
  *      ├── Output_FF/
- *      ├── Output_EZD/{orig,fetus,mom}/
- *      ├── Output_PRIZM/{orig,fetus,mom}/
- *      ├── Output_WC/{orig,fetus,mom}/
- *      ├── Output_WCX/{orig,fetus,mom}/
+ *      ├── Output_EZD/{orig,fetus,mom}_EZD_grid.png   (+ nested group dirs kept)
+ *      ├── Output_PRIZM/{sample}_{group}_*.png
+ *      ├── Output_WC/{sample}.wc.{group}_z.png
+ *      ├── Output_WCX/{sample}.wcx.{group}.png
  *      ├── Output_hmmcopy/
  *      ├── Output_MD/
+ *      ├── gxcnv1/ gxcnv2/
  *      └── Output_Result/
- *           ├── {sample_name}.result.json
- *           └── {sample_name}.review.html
  * =========================================================
  */
 
@@ -126,6 +125,9 @@ process COPY_TO_OUTPUT {
         path html_file
         val  analysisdir
         val  outdir
+        // Barrier only: count of gxcnv1/2 genome plot basenames (no path staging —
+        // gxcnv1 & gxcnv2 share *_{group}_genome.png names).
+        val  gxcnv_plots_ready
 
     output:
         path ".copy_done", emit: done
@@ -136,6 +138,8 @@ process COPY_TO_OUTPUT {
 
         export TMPDIR="\${NXF_TASK_WORKDIR}"
         export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
+
+        echo "[COPY] gxcnv plot barrier count=${gxcnv_plots_ready}"
 
         # Create portal-compatible output directory structure
         mkdir -p ${outdir}/Output_QC
@@ -171,10 +175,9 @@ process COPY_TO_OUTPUT {
         _copy ${analysisdir}/${sample_name}/gxcnv1         ${outdir}/gxcnv1
         _copy ${analysisdir}/${sample_name}/gxcnv2         ${outdir}/gxcnv2
 
-        # Inject gxcnv1/2 into Portal WC/WCX flat filenames (same names/formats).
-        # Nested Output_WC/{group}/ originals are left for MD; Portal buttons
-        # open the flat paths written here.
-        python3 ${projectDir}/bin/scripts/modules/portal_cnv_alias.py \\
+        # Flatten to ken-nipt / Portal paths + re-sync gxcnv1/2 + WC/WCX aliases.
+        # Nested Output_*/{group}/ trees are kept for MD / internal use.
+        python3 ${projectDir}/bin/scripts/modules/portal_output_layout.py \\
             --sample ${sample_name} \\
             --analysis-dir ${analysisdir} \\
             --outdir ${outdir}

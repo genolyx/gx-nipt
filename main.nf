@@ -363,6 +363,8 @@ workflow {
     ch_gxcnv_calls       = WC_WORKFLOW.out.gxcnv_calls
     ch_gxcnv_comparison  = WC_WORKFLOW.out.gxcnv_comparison
     ch_gxcnv2_calls      = WC_WORKFLOW.out.gxcnv2_calls
+    ch_gxcnv2_genome     = WC_WORKFLOW.out.gxcnv2_genome
+    ch_gxcnv1_genome     = WC_WORKFLOW.out.gxcnv1_genome
 
     // Log gx-cnv concordance when available
     ch_gxcnv_comparison
@@ -393,7 +395,9 @@ workflow {
         analysisdir,
         outdir,
         FF_GENDER_WORKFLOW.out.ff_ensemble,  // ensures GXFF_ENSEMBLE finishes before report
-        ch_gxcnv2_calls                      // ensures all GXCNV2_PREDICT publishDir copies finish
+        ch_gxcnv2_calls,                     // GXCNV2_PREDICT publishDir
+        ch_gxcnv2_genome,                    // GXCNV2_PLOT publishDir (Portal WCX images)
+        ch_gxcnv1_genome                     // GXCNV1_PLOT publishDir (Portal WC images)
     )
 
     // ─────────────────────────────────────────────────────────

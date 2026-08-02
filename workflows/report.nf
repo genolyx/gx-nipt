@@ -28,6 +28,8 @@ workflow REPORT_WORKFLOW {
         outdir           // string
         ch_ff_ensemble   // channel: tuple(sample_id, path) — ensures GXFF_ENSEMBLE finishes before report
         ch_gxcnv2_calls  // channel: tuple(sample, group, path) — ensures gxcnv2 predict finishes before report
+        ch_gxcnv2_genome // channel: tuple(sample_id, path) — ensures GXCNV2_PLOT publishDir finishes
+        ch_gxcnv1_genome // channel: tuple(sample_id, path) — ensures GXCNV1_PLOT publishDir finishes
 
     main:
         // Normalise per-group tuple channels to plain path channels
@@ -42,6 +44,16 @@ workflow REPORT_WORKFLOW {
         // Strip tuple wrapper from gxcnv2 calls so report waits for all
         // GXCNV2_PREDICT publishDir copies before generate_json_output.py reads them.
         ch_gxcnv2_paths = ch_gxcnv2_calls.map { sid, grp, p -> p }
+
+        // Do NOT stage gxcnv1/2 genome PNGs into GENERATE_JSON — both emit the
+        // same basenames (*_{orig,fetus,mom}_genome.png) and Nextflow fails with
+        // "input file name collision". Wait for plots via a val barrier on COPY.
+        ch_gxcnv_plots_ready = ch_gxcnv2_genome
+            .mix(ch_gxcnv1_genome)
+            .map { _sid, p -> p.name }
+            .collect()
+            .ifEmpty([])
+            .map { names -> names instanceof List ? names.size() : 0 }
 
         ch_all_results = ch_ezd_paths
             .mix(ch_prizm_paths)
@@ -73,7 +85,8 @@ workflow REPORT_WORKFLOW {
             GENERATE_JSON.out.json_file,
             GENERATE_HTML.out.html_file,
             analysisdir,
-            outdir
+            outdir,
+            ch_gxcnv_plots_ready
         )
 
     emit:
