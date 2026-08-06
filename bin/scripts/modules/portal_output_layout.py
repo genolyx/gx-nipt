@@ -74,6 +74,32 @@ def sync_gxcnv_trees(analysis_dir: Path, sample: str, outdir: Path) -> list[str]
     return written
 
 
+def sync_wcx_plot_dirs(analysis_dir: Path, sample: str, outdir: Path) -> list[str]:
+    """Ensure WCX --plot dirs land under outdir/Output_WCX/{group}/ before flatten.
+
+    publishDir + COPY_TO_OUTPUT usually already copy them; this covers races /
+    partial copies so chr_plots packing still works.
+    """
+    written: list[str] = []
+    for group in GROUPS:
+        plots_name = f"{sample}.wcx.{group}.plots"
+        candidates = [
+            analysis_dir / sample / "Output_WCX" / group / plots_name,
+            analysis_dir / "Output_WCX" / group / plots_name,
+            outdir / "Output_WCX" / group / plots_name,
+        ]
+        src_dir = next((c for c in candidates if c.is_dir()), None)
+        if src_dir is None:
+            continue
+        dst_dir = outdir / "Output_WCX" / group / plots_name
+        if src_dir.resolve() != dst_dir.resolve():
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            for src in src_dir.iterdir():
+                if src.is_file() and _copy_file(src, dst_dir / src.name):
+                    written.append(str(dst_dir / src.name))
+    return written
+
+
 def flatten_portal_plots(outdir: Path, sample: str) -> list[str]:
     """Hoist Portal plot/report files to ken-nipt flat paths."""
     written: list[str] = []
@@ -133,6 +159,18 @@ def flatten_portal_plots(outdir: Path, sample: str) -> list[str]:
                     written.append(str(flat_png))
                     break
 
+        # Microdeletion Zoom-in: Portal JSON → Output_WCX/chr_plots/{group}/chrN.png
+        # Source is WisecondorX --plot output: {sample}.wcx.{group}.plots/chr*.png
+        plots_src = (
+            outdir / "Output_WCX" / group / f"{sample}.wcx.{group}.plots"
+        )
+        plots_dst = outdir / "Output_WCX" / "chr_plots" / group
+        if plots_src.is_dir():
+            for src in sorted(plots_src.glob("chr*.png")):
+                dst = plots_dst / src.name
+                if _copy_file(src, dst):
+                    written.append(str(dst))
+
     return written
 
 
@@ -148,6 +186,7 @@ def apply_portal_layout(sample: str, analysis_dir: Path, outdir: Path) -> dict:
         d.mkdir(parents=True, exist_ok=True)
 
     synced = sync_gxcnv_trees(analysis_dir, sample, outdir)
+    synced.extend(sync_wcx_plot_dirs(analysis_dir, sample, outdir))
     flattened = flatten_portal_plots(outdir, sample)
     alias = inject_portal_aliases(sample, analysis_dir, outdir)
 

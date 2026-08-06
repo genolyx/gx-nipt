@@ -203,9 +203,28 @@ process RUN_WCX {
             ${sample_name}.wcx.${group} \\
             --binsize ${binsize}
 
+        # Optional --regions BED for WCX zoom plots (ken-nipt parity).
+        # Prefer ref tree; fall back to repo data/ or a one-line stub.
+        REGIONS=""
+        for _reg in \\
+            "${params.ref_dir}/bed/common/empty_regions.txt" \\
+            "${projectDir}/data/empty_regions.txt"
+        do
+            if [ -f "\${_reg}" ]; then
+                REGIONS="\${_reg}"
+                break
+            fi
+        done
+        if [ -z "\${REGIONS}" ]; then
+            printf 'chr1\\t100000000\\t100200000\\t.\\n' > empty_regions.txt
+            REGIONS="\${PWD}/empty_regions.txt"
+            echo "[WCX] WARNING: empty_regions.txt not found in refs — using stub" >&2
+        fi
+
         # Run WisecondorX predict with gender-aware reference
         # zscore thresholds from pipeline_config.json WCX section (ken-nipt: orig/fetus=6, mom=15)
-        # --alpha and --seed match ken-nipt's invocation for reproducibility
+        # --plot produces {outid}.plots/chr*.png for Portal Microdeletion Zoom-in
+        # --alpha/--seed/--regions match ken-nipt for reproducibility
         WisecondorX predict \\
             ${sample_name}.wcx.${group}.npz \\
             \${REF_NPZ} \\
@@ -213,12 +232,22 @@ process RUN_WCX {
             --zscore ${wcx_zscore} \\
             --alpha 0.01 \\
             --seed 100 \\
-            --bed
+            --plot \\
+            --bed \\
+            --regions "\${REGIONS}"
 
         # Ensure all BED files exist (WCX --bed always creates them, but be defensive)
         [ -f "${sample_name}.wcx.${group}_bins.bed" ]       || touch "${sample_name}.wcx.${group}_bins.bed"
         [ -f "${sample_name}.wcx.${group}_segments.bed" ]   || touch "${sample_name}.wcx.${group}_segments.bed"
         [ -f "${sample_name}.wcx.${group}_aberrations.bed" ] || touch "${sample_name}.wcx.${group}_aberrations.bed"
+
+        # ken-nipt / Portal expect Output_WCX/{group}/{sample}.wcx.{group}.plots/chr*.png
+        if [ ! -d "${sample_name}.wcx.${group}.plots" ]; then
+            echo "[WCX] WARNING: --plot did not create ${sample_name}.wcx.${group}.plots" >&2
+        else
+            N_CHR=\$(ls -1 "${sample_name}.wcx.${group}.plots"/chr*.png 2>/dev/null | wc -l | tr -d ' ')
+            echo "[WCX] plots dir ready: ${sample_name}.wcx.${group}.plots (\${N_CHR} chr*.png)"
+        fi
 
         echo "[WCX] ${group} complete for ${sample_name}"
         """

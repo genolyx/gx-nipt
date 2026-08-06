@@ -1370,6 +1370,21 @@ def read_qc_data(file_path):
 # ==============================================================
 
 
+def format_md_zscore(value):
+    """Format MD z-score to 2 decimal places for portal JSON output."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def process_md_detection(wc_file, wcx_file, data_src, target_bed_file, md_type="md8"):
     """Process WC and WCX detection results with default values - Updated for md108, md87, md320"""
 
@@ -1418,7 +1433,7 @@ def process_md_detection(wc_file, wcx_file, data_src, target_bed_file, md_type="
                         results[md_key]["detection"]["WC"] = "High Risk"
                         results[md_key]["detected_region"]["WC"] = detected_region
                         results[md_key]["length"]["WC"] = str(row["length"])
-                        results[md_key]["z_score"]["WC"] = str(row["zscore"])
+                        results[md_key]["z_score"]["WC"] = format_md_zscore(row["zscore"])
                         results[md_key]["detected_region_link"]["WC"] = (
                             f"https://deciphergenomics.org/browser#q/grch37:{detected_region}"
                         )
@@ -1438,7 +1453,7 @@ def process_md_detection(wc_file, wcx_file, data_src, target_bed_file, md_type="
                         results[md_key]["detection"]["WCX"] = "High Risk"
                         results[md_key]["detected_region"]["WCX"] = detected_region
                         results[md_key]["length"]["WCX"] = str(row["length"])
-                        results[md_key]["z_score"]["WCX"] = str(row["zscore"])
+                        results[md_key]["z_score"]["WCX"] = format_md_zscore(row["zscore"])
                         results[md_key]["detected_region_link"]["WCX"] = (
                             f"https://deciphergenomics.org/browser#q/grch37:{detected_region}"
                         )
@@ -1467,7 +1482,7 @@ def process_md_detection(wc_file, wcx_file, data_src, target_bed_file, md_type="
                 all_detections[disease]["WC"] = {
                     "detected_region": detected_region,
                     "length": str(row["length"]),
-                    "z_score": str(row["zscore"]),
+                    "z_score": format_md_zscore(row["zscore"]),
                     "chr": row["chr"],
                     "start": row["start"],
                     "end": row["end"],
@@ -1485,7 +1500,7 @@ def process_md_detection(wc_file, wcx_file, data_src, target_bed_file, md_type="
                 all_detections[disease]["WCX"] = {
                     "detected_region": detected_region,
                     "length": str(row["length"]),
-                    "z_score": str(row["zscore"]),
+                    "z_score": format_md_zscore(row["zscore"]),
                     "chr": row["chr"],
                     "start": row["start"],
                     "end": row["end"],
