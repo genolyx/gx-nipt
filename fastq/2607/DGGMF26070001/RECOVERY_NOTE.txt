@@ -1,0 +1,3 @@
+WARNING: Original ~428MB FASTQs were truncated on 2026-08-10 by a test run
+writing through a symlink. Restored from prior downsampled work copies (~155MB),
+NOT the original full FASTQs. Re-download from sequencing source if full data needed.

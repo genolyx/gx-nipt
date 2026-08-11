@@ -50,6 +50,19 @@ def _run(cmd: str) -> None:
     subprocess.check_call(cmd, shell=True, executable="/bin/bash")
 
 
+def _unlink_if_exists(path: Path) -> None:
+    """Remove path if present (including dangling/symlink) before writing.
+
+    Writing with shell ``>`` or open() through a symlink truncates the
+    *target* file — dangerous when Nextflow stages host FASTQs as links.
+    """
+    try:
+        if path.is_symlink() or path.exists():
+            path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def _seqtk_sample(src: Path, dst: Path, n: int, total: int, seed: int = 100) -> None:
     """Sample n reads with seqtk (reproducible) and gzip the result.
 
@@ -58,15 +71,23 @@ def _seqtk_sample(src: Path, dst: Path, n: int, total: int, seed: int = 100) -> 
     the same fraction ensures both pipelines select identical reads.
     """
     fraction = n / total
-    _run(f"seqtk sample -s {seed} {src} {fraction} | gzip -c > {dst}")
+    tmp = dst.with_name(dst.name + ".tmp")
+    _unlink_if_exists(tmp)
+    _run(f"seqtk sample -s {seed} {src} {fraction} | gzip -c > {tmp}")
+    _unlink_if_exists(dst)
+    tmp.replace(dst)
 
 
 def _passthrough(src: Path, dst: Path) -> None:
     """Re-publish src as gzipped dst without modifying read count."""
+    _unlink_if_exists(dst)
     if str(src).endswith(".gz"):
         shutil.copyfile(src, dst)
     else:
-        _run(f"gzip -c {src} > {dst}")
+        tmp = dst.with_name(dst.name + ".tmp")
+        _unlink_if_exists(tmp)
+        _run(f"gzip -c {src} > {tmp}")
+        tmp.replace(dst)
 
 
 def main() -> int:
