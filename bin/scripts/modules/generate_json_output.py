@@ -560,6 +560,92 @@ def read_gxcnv2_all_groups(analysis_dir, sample_name):
     return result or None
 
 
+def read_gxcnv1_group(analysis_dir, sample_name, group="orig"):
+    """
+    Read gxcnv1 (WC-track) predict results for one group.
+
+    Same TSV schema as gxcnv2; figures live under gxcnv1/.
+    """
+    gxcnv1_dir = f"{analysis_dir}/{sample_name}/gxcnv1"
+    composite_id = f"{sample_name}_{group}"
+    calls_path = f"{gxcnv1_dir}/{composite_id}_calls.tsv"
+    qc_path = f"{gxcnv1_dir}/{composite_id}_qcmetrics.tsv"
+
+    if not os.path.isfile(calls_path):
+        return None
+
+    calls = []
+    skipped = False
+    with open(calls_path) as f:
+        header = None
+        for line in f:
+            line = line.rstrip()
+            if line.startswith("##gxcnv1_skip=true") or line.startswith("##gxcnv_skip=true"):
+                skipped = True
+                break
+            if line.startswith("##"):
+                continue
+            if line.startswith("#"):
+                header = line.lstrip("#").split("\t")
+                continue
+            if header is None or not line:
+                continue
+            row = dict(zip(header, line.split("\t")))
+            chrom = row.get("chrom", "")
+            if not chrom:
+                continue
+            calls.append({
+                "chrom": chrom,
+                "start": row.get("start", ""),
+                "end": row.get("end", ""),
+                "type": row.get("type", ""),
+                "mean_log2_ratio": row.get("mean_log2_ratio", "NA"),
+                "mean_z": row.get("mean_z", "NA"),
+                "mean_mad_z": row.get("mean_mad_z", "NA"),
+                "n_bins": row.get("n_bins", "NA"),
+            })
+
+    if skipped:
+        return None
+
+    qc_metrics = {}
+    if os.path.isfile(qc_path):
+        with open(qc_path) as f:
+            for line in f:
+                line = line.rstrip()
+                if line.startswith("#") or not line:
+                    continue
+                parts = line.split("\t", 1)
+                if len(parts) == 2:
+                    qc_metrics[parts[0]] = parts[1]
+
+    def _fig(suffix):
+        full = f"{gxcnv1_dir}/{composite_id}_{suffix}.png"
+        rel = f"gxcnv1/{composite_id}_{suffix}.png"
+        return rel if os.path.isfile(full) and os.path.getsize(full) > 0 else None
+
+    return {
+        "group": group,
+        "n_calls": len(calls),
+        "calls": calls,
+        "qc_metrics": qc_metrics,
+        "figures": {
+            "genome": _fig("genome"),
+            "qc": _fig("qc"),
+        },
+    }
+
+
+def read_gxcnv1_all_groups(analysis_dir, sample_name):
+    """Read gxcnv1 results for orig, fetus, mom. Returns dict keyed by group."""
+    result = {}
+    for grp in ("orig", "fetus", "mom"):
+        data = read_gxcnv1_group(analysis_dir, sample_name, grp)
+        if data is not None:
+            result[grp] = data
+    return result or None
+
+
 def read_gxcnv_comparison(analysis_dir, sample_name):
     """
     Read gx-cnv vs WCX concordance summary + per-region calls + figure paths.
@@ -673,6 +759,8 @@ def build_final_results_table(analysis_dir, sample_name):
 
     # 2d. Read gxcnv2 per-group results (orig/fetus/mom)
     gxcnv2_per_group = read_gxcnv2_all_groups(analysis_dir, sample_name)
+    # 2e. Read gxcnv1 per-group results (WC track; portal can show beside native WC)
+    gxcnv1_per_group = read_gxcnv1_all_groups(analysis_dir, sample_name)
 
     # 3. Read sample bias QC
     sample_bias_file = f"{analysis_dir}/{sample_name}/Output_PRIZM/orig/{sample_name}.of_orig.prizm.qc.txt"
@@ -740,8 +828,9 @@ def build_final_results_table(analysis_dir, sample_name):
         "sample_bias_qc": sample_bias,
         "gxff": gxff_data,            # None when gx-FF was disabled
         "gxcnv": gxcnv_data,          # WCX cross-check summary (orig); None when disabled
-        "gxcnv_groups": gxcnv_per_group,   # per-group (orig/fetus/mom) calls + figures
-        "gxcnv2_groups": gxcnv2_per_group, # per-group gxcnv2 calls + figures + QC metrics
+        "gxcnv_groups": gxcnv_per_group,   # legacy gxcnv per-group
+        "gxcnv1_groups": gxcnv1_per_group, # WC-track gxcnv1 calls + figures
+        "gxcnv2_groups": gxcnv2_per_group, # WCX-track gxcnv2 calls + figures
     }
 
 
@@ -1458,7 +1547,7 @@ def process_md_detection(wc_file, wcx_file, data_src, target_bed_file, md_type="
                             f"https://deciphergenomics.org/browser#q/grch37:{detected_region}"
                         )
                         results[md_key]["image"]["WCX"] = (
-                            (f"Output_WCX/chr_plots/{data_src}/chr{row['chr']}.png"),
+                            f"Output_WCX/chr_plots/{data_src}/chr{row['chr']}.png"
                         )
                         results[md_key]["checked"] = True
                         wcx_chr_list.append(row["chr"])
@@ -1783,7 +1872,22 @@ def build_nipt_json(
             else:
                 _fr["gxcnv_results"][grp] = None
 
-        # gxcnv2 per-group results (portal-facing)
+        # gxcnv1 per-group (WC replacement visuals — beside native WC paths)
+        gxcnv1_grps = final_results.get("gxcnv1_groups") or {}
+        _fr["gxcnv1_results"] = {}
+        for grp in ("orig", "fetus", "mom"):
+            g1data = gxcnv1_grps.get(grp)
+            if g1data:
+                _fr["gxcnv1_results"][grp] = {
+                    "n_calls":    g1data.get("n_calls", 0),
+                    "calls":      g1data.get("calls", []),
+                    "qc_metrics": g1data.get("qc_metrics", {}),
+                    "figures":    g1data.get("figures", {}),
+                }
+            else:
+                _fr["gxcnv1_results"][grp] = None
+
+        # gxcnv2 per-group results (WCX replacement visuals — beside native WCX)
         gxcnv2_grps = final_results.get("gxcnv2_groups") or {}
         _fr["gxcnv2_results"] = {}
         for grp in ("orig", "fetus", "mom"):
@@ -1861,12 +1965,23 @@ def build_nipt_json(
         # File paths for each analysis method
         files = {
             f"{group}_ezd_plot": f"Output_EZD/{group}_EZD_grid.png",
+            # PRIZM line plots + heatmaps (both portal-facing)
             f"{group}_prizm_chr_plot": f"Output_PRIZM/{sample_name}_{group}_chromosome_line.png",
             f"{group}_prizm_10mb_plot": f"Output_PRIZM/{sample_name}_{group}_10mb_line.png",
+            f"{group}_prizm_chr_heatmap": f"Output_PRIZM/{sample_name}_{group}_chromosome_heatmap.png",
+            f"{group}_prizm_10mb_heatmap": f"Output_PRIZM/{sample_name}_{group}_10mb_heatmap.png",
+            # Native WC / WCX (never overwritten by gxcnv)
             f"{group}_wc_plot": f"Output_WC/{sample_name}.wc.{group}_z.png",
             f"{group}_wc_result": f"Output_WC/{sample_name}.wc.{group}.report.txt",
             f"{group}_wcx_plot": f"Output_WCX/{sample_name}.wcx.{group}.png",
             f"{group}_wcx_result": f"Output_WCX/{sample_name}.wcx.{group}_aberrations.bed",
+            # gxcnv1 (= WC track) / gxcnv2 (= WCX track) replacement visuals
+            f"{group}_gxcnv1_plot": f"gxcnv1/{sample_name}_{group}_genome.png",
+            f"{group}_gxcnv1_qc_plot": f"gxcnv1/{sample_name}_{group}_qc.png",
+            f"{group}_gxcnv1_result": f"gxcnv1/{sample_name}_{group}_calls.tsv",
+            f"{group}_gxcnv2_plot": f"gxcnv2/{sample_name}_{group}_genome.png",
+            f"{group}_gxcnv2_qc_plot": f"gxcnv2/{sample_name}_{group}_qc.png",
+            f"{group}_gxcnv2_result": f"gxcnv2/{sample_name}_{group}_calls.tsv",
         }
 
         # Read chromosome analysis
@@ -2163,6 +2278,8 @@ def build_nipt_json(
             else:
                 logger.warning("QC DataFrame is empty, using default values")
                 sequencing_metrics = {}
+                Final_QC_result = "FAIL"
+                No_Call_reason.append("QC file is empty or could not be parsed")
 
         # Analysis QC
         analysis_qc = {}
@@ -2293,6 +2410,10 @@ def build_nipt_json(
 
     except Exception as e:
         logger.error(f"Error building quality control section: {e}")
+        Final_QC_result = "FAIL"
+        reason = f"QC section build failed: {e}"
+        if reason not in No_Call_reason:
+            No_Call_reason.append(reason)
         # 완전히 기본값으로 설정
         output[APPID]["quality_control"] = {
             "sequencing_metrics": {},
@@ -2305,6 +2426,14 @@ def build_nipt_json(
 
     # 250713 : added to show QC Results in Final Results Summary section
     # 250809 : MD_result, MD_comment are also set as No call
+    # Empty sequencing_metrics with PASS is not trustworthy (parse miss / exception path).
+    seq_metrics = (
+        output.get(APPID, {}).get("quality_control", {}).get("sequencing_metrics") or {}
+    )
+    if Final_QC_result == "PASS" and not seq_metrics:
+        Final_QC_result = "FAIL"
+        No_Call_reason.append("sequencing_metrics missing from QC section")
+
     output[APPID]["final_results"]["QC_result"] = Final_QC_result
 
     if Final_QC_result != "PASS":

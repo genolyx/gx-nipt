@@ -48,6 +48,18 @@ process RUN_PRIZM {
             --outdir . \\
             --labcode ${labcode}
 
+        # Required Portal review plots (heatmap + chr line plot)
+        for f in \\
+            ${sample_name}_${group}_chromosome_heatmap.png \\
+            ${sample_name}_${group}_chromosome_line.png
+        do
+            if [ ! -s "\$f" ]; then
+                echo "[PRIZM] ERROR: missing or empty plot: \$f" >&2
+                echo "[PRIZM] FAIL_REASON=PRIZM plot failed for ${sample_name}/${group} (\$f)" >&2
+                exit 1
+            fi
+        done
+
         echo "[PRIZM] ${group} complete for ${sample_name}"
         """
 }

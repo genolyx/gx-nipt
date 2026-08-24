@@ -39,6 +39,9 @@ process GENERATE_JSON {
         // and writes to ``<output_dir>/<sample_name>/<sample_name>.json``.
         // We run it with output_dir=. and rename to the Nextflow-expected name.
         def bed_dir = "${params.ref_dir}/labs/${labcode}/bed"
+        // Maternal age drives risk_before tables; daemon/run_nipt pass --age into
+        // params.age. Fall back to 35 only when from_bam/algorithm_only omit it.
+        def maternal_age = (params.age != null && params.age.toString().trim()) ? params.age : 35
         """
         set -euo pipefail
 
@@ -52,7 +55,8 @@ process GENERATE_JSON {
             -target_bed_dir ${bed_dir} \\
             -ref_dir        ${params.ref_dir}/labs/${labcode} \\
             -config_file    ${config_json} \\
-            -version        "gx-nipt-1.0"
+            -version        "gx-nipt-1.0" \\
+            -age            ${maternal_age}
 
         # The script writes <cwd>/<sample_name>/<sample_name>.json — hoist
         # it up so it matches the declared output.
@@ -64,7 +68,7 @@ process GENERATE_JSON {
             exit 1
         fi
 
-        echo "[REPORT] JSON generated for ${sample_name}"
+        echo "[REPORT] JSON generated for ${sample_name} (age=${maternal_age})"
         """
 }
 
@@ -186,8 +190,10 @@ process COPY_TO_OUTPUT {
         cp ${json_file} ${outdir}/Output_Result/
         cp ${html_file} ${outdir}/Output_Result/
 
-        # Write completion marker (portal compatibility)
-        echo "\$(date -Iseconds)" > ${outdir}/${sample_name}.completed
+        # Do NOT write <sample>.completed here. When sample_name == order_id
+        # that file is the daemon success marker; writing it before
+        # run_nipt.sh publishes <order_id>.json causes false COMPLETED
+        # recovery. run_nipt.sh writes the marker after JSON + tar are ready.
 
         touch .copy_done
         echo "[COPY] Output copied to ${outdir}"

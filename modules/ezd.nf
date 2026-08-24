@@ -50,6 +50,12 @@ process RUN_EZD {
             --config   ${config_json} \\
             --outdir   .
 
+        if [ ! -s "${group}_EZD_grid.png" ]; then
+            echo "[EZD] ERROR: missing or empty plot: ${group}_EZD_grid.png" >&2
+            echo "[EZD] FAIL_REASON=EZD plot failed for ${sample_name}/${group}" >&2
+            exit 1
+        fi
+
         echo "[EZD] ${group} complete for ${sample_name}"
         """
 }

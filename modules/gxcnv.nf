@@ -259,8 +259,16 @@ process GXCNV_PREDICT {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir { "${analysisdir}/${sample_id}/gxcnv" }, mode: 'copy', pattern: "*.tsv", overwrite: true
-    publishDir { "${analysisdir}/${sample_id}/gxcnv" }, mode: 'copy', pattern: "*.txt", overwrite: true
+    // sample_id is composite "{sample}_{group}"; publish under base sample so
+    // generate_json_output.py can find analysisdir/{sample}/gxcnv/{composite}_*.tsv
+    publishDir {
+        def _parts = sample_id.toString().tokenize('_')
+        "${analysisdir}/${_parts[0..-2].join('_')}/gxcnv"
+    }, mode: 'copy', pattern: "*.tsv", overwrite: true
+    publishDir {
+        def _parts = sample_id.toString().tokenize('_')
+        "${analysisdir}/${_parts[0..-2].join('_')}/gxcnv"
+    }, mode: 'copy', pattern: "*.txt", overwrite: true
 
     input:
     tuple val(sample_id), path(sample_npz)
@@ -296,8 +304,9 @@ process GXCNV_PREDICT {
     }' ${gender_txt})
 
     if [ -z "\${GENDER}" ]; then
-        echo "[GXCNV] Could not parse final_gender; defaulting to female." >&2
-        GENDER="female"
+        echo "[GXCNV] ERROR: could not parse final_gender from ${gender_txt}" >&2
+        echo "[GXCNV] Refusing to default gender — wrong GXCNV reference would be used." >&2
+        exit 1
     fi
 
     # orig uses plain gender dir; fetus/mom uses gender_group subdir
@@ -543,6 +552,14 @@ process GXCNV_PLOT {
         --bins  ${bins_tsv} \\
         --calls ${calls_tsv} \\
         -o      ${sample_id}
+
+    for f in ${sample_id}_genome.png ${sample_id}_regions.png ${sample_id}_qc.png; do
+        if [ ! -s "\$f" ]; then
+            echo "[GXCNV_PLOT] ERROR: missing or empty plot: \$f" >&2
+            echo "[GXCNV_PLOT] FAIL_REASON=gxcnv plot failed for ${sample_id} (\$f)" >&2
+            exit 1
+        fi
+    done
     """
 
     stub:

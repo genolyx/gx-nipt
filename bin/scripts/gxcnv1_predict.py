@@ -10,11 +10,10 @@ Enhancements added on top:
   • TSV output schema compatible with gxcnv2 (bins / segments / calls / qcmetrics)
 
 Strategy:
-  1. sample.npz already produced by GXCNV1_CONVERT (wisecondor.py convert)
-  2. out.npz  already produced by wisecondor.py test (called from GXCNV1_PREDICT shell)
-  3. Load out.npz to get per-bin z-scores (results_z) and ratios (results_r)
-  4. Re-annotate with MAD z-score and MAPD
-  5. Write gxcnv2-compatible TSV outputs
+  1. sample.npz + out.npz already produced by RUN_WC (wisecondor convert + test)
+  2. Load out.npz for per-bin z-scores (results_z) and ratios (results_r)
+  3. Re-annotate with MAD z-score and MAPD
+  4. Write gxcnv2-compatible TSV outputs
 
 Wisecondor out.npz layout (Python2-generated, loaded with allow_pickle=True):
   binsize        int   — bin size in bp

@@ -65,6 +65,7 @@ include { REPORT_WORKFLOW }     from './workflows/report'
 // Direct import used only in algorithm_only mode, where ALIGN_WORKFLOW is skipped
 // and we still need to produce the (orig, fetus, mom) trio from an existing BAM.
 include { SAMTOOLS_SPLIT_FETUS_MOM } from './modules/samtools'
+include { SAMTOOLS_ENSURE_INDEX }    from './modules/samtools'
 
 // ─────────────────────────────────────────────────────────
 // Parameter defaults (overridden by nextflow.config or CLI)
@@ -259,10 +260,18 @@ workflow {
     } else {
         // algorithm_only: skip alignment, use existing BAM and (re)generate
         // the (orig, fetus, mom) trio by re-running the TLEN-based split.
-        def pp_bam_path = "${analysisdir}/${sample_name}.proper_paired.bam"
-        def pp_bai_path = "${analysisdir}/${sample_name}.proper_paired.bam.bai"
-        ch_proper_bam = Channel.fromPath(pp_bam_path, checkIfExists: true)
-        ch_proper_bai = Channel.fromPath(pp_bai_path, checkIfExists: true)
+        // BAM may live in either layout:
+        //   nested: ${analysisdir}/${sample}/${sample}.proper_paired.bam  (publishDir)
+        //   flat:   ${analysisdir}/${sample}.proper_paired.bam           (SSD SCRATCH_MOVE_FINAL)
+        def pp_nested = file("${analysisdir}/${sample_name}/${sample_name}.proper_paired.bam")
+        def pp_flat   = file("${analysisdir}/${sample_name}.proper_paired.bam")
+        def pp_bam    = pp_nested.exists() ? pp_nested : pp_flat
+        def pp_bai    = file("${pp_bam}.bai")
+        log.info "[algorithm_only] Using proper_paired BAM: ${pp_bam}"
+        ch_proper_bam = Channel.fromPath(pp_bam.toString(), checkIfExists: true)
+        ch_optional_bai = Channel.value(pp_bai.exists() ? pp_bai : file('NO_BAI'))
+        SAMTOOLS_ENSURE_INDEX(sample_name, ch_proper_bam, ch_optional_bai)
+        ch_proper_bai = SAMTOOLS_ENSURE_INDEX.out.bai
 
         SAMTOOLS_SPLIT_FETUS_MOM(
             sample_name,
@@ -291,10 +300,9 @@ workflow {
 
     // ── Fetal Fraction & Gender ───────────────────────────
     // HMMcopy 50kb normalization for "orig" group:
-    //   - passed to CALCULATE_YFF2 (gd_2 calculation)
-    //   - passed to GXFF_PREDICT as bincount (same ~50k-bin feature space as training)
-    // Use .first() to convert to a value channel so it can be consumed twice
-    // without exhausting the queue (YFF2 and GXFF_PREDICT both need it).
+    //   - CALCULATE_YFF2 (gd_2)
+    //   - GXFF_PREDICT feature input (same ~50k-bin space as training)
+    // .first() → value channel so YFF2 and GXFF_PREDICT can both consume it.
     ch_wig_norm_orig = ch_norm_50kb
         .filter { _sample, group, _path -> group == "orig" }
         .map    { _sample, _group, path -> path }
@@ -304,8 +312,7 @@ workflow {
         sample_name,
         ch_proper_bam,
         ch_proper_bai,
-        ch_wig_norm_orig,
-        ch_wig_norm_orig,  // bincount for gx-FF = same 50kb WIG (training-consistent)
+        ch_wig_norm_orig,  // YFF2 + gx-FF 50kb WIG features
         ch_config,
         labcode,
         analysisdir,

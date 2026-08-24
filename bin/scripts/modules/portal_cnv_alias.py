@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
-Inject gxcnv1 / gxcnv2 artefacts into Portal WC / WCX slots.
+Place gxcnv1 / gxcnv2 artefacts beside native WC / WCX (do not overwrite).
 
-Portal opens fixed flat paths under Output_WC / Output_WCX. This script
-writes those filenames with gxcnv content while preserving WC/WCX formats:
+Portal needs both image sets:
+  - Native WC / WCX plots (Output_WC / Output_WCX flat ken-nipt names)
+  - gxcnv1 / gxcnv2 plots (under gxcnv1/ and gxcnv2/, plus optional sidecars)
 
-  gxcnv1/{sample}_{group}_genome.png  → Output_WC/{sample}.wc.{group}_z.png
-  gxcnv1/{sample}_{group}_calls.tsv   → Output_WC/{sample}.wc.{group}.report.txt
-  gxcnv2/{sample}_{group}_genome.png  → Output_WCX/{sample}.wcx.{group}.png
-  gxcnv2/{sample}_{group}_calls.tsv   → Output_WCX/{sample}.wcx.{group}_aberrations.bed
+Sidecar flat names (optional convenience for Portal under Output_WC/WCX):
+  gxcnv1/{sample}_{group}_genome.png
+      → Output_WC/{sample}.gxcnv1.{group}_z.png
+  gxcnv1/{sample}_{group}_calls.tsv
+      → Output_WC/{sample}.gxcnv1.{group}.report.txt
+  gxcnv2/{sample}_{group}_genome.png
+      → Output_WCX/{sample}.gxcnv2.{group}.png
+  gxcnv2/{sample}_{group}_calls.tsv
+      → Output_WCX/{sample}.gxcnv2.{group}_aberrations.bed
 
-If a gxcnv source is missing for a group, that Portal slot is left untouched
-(nested originals from COPY_TO_OUTPUT remain as fallback material).
+Native flats (``{sample}.wc.{group}_z.png``, ``{sample}.wcx.{group}.png``, …)
+are never replaced.
 """
 
 from __future__ import annotations
@@ -72,7 +78,7 @@ def _read_calls(path: Path) -> list[dict]:
 
 
 def calls_to_wc_report(calls_path: Path, out_path: Path) -> None:
-    """Write minimal WC report.txt from gxcnv1 calls.tsv."""
+    """Write minimal WC-style report.txt from gxcnv1 calls.tsv."""
     rows = _read_calls(calls_path)
     lines = ["# Test results: #", "z-score\teffect\tmbsize\tlocation"]
     for r in rows:
@@ -93,7 +99,7 @@ def calls_to_wc_report(calls_path: Path, out_path: Path) -> None:
 
 
 def calls_to_wcx_bed(calls_path: Path, out_path: Path) -> None:
-    """Write WCX aberrations.bed from gxcnv2 calls.tsv."""
+    """Write WCX-style aberrations.bed from gxcnv2 calls.tsv."""
     rows = _read_calls(calls_path)
     lines = ["chr\tstart\tend\tratio\tzscore\ttype"]
     for r in rows:
@@ -108,7 +114,6 @@ def calls_to_wcx_bed(calls_path: Path, out_path: Path) -> None:
         chrom = _strip_chr(r.get("chrom", ""))
         ctype = str(r.get("type", "")).strip().lower()
         if ctype not in ("gain", "loss"):
-            # GAIN/LOSS → gain/loss
             ctype = ctype.lower()
         lines.append(f"{chrom}\t{start}\t{end}\t{ratio}\t{z}\t{ctype}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,14 +130,12 @@ def _copy_if_exists(src: Path, dst: Path) -> bool:
 
 def inject_portal_aliases(sample: str, analysis_dir: Path, outdir: Path) -> dict:
     """
-    Write Portal flat WC/WCX files from gxcnv1/2 under analysis_dir/{sample}/.
-
-    Returns a summary dict of actions taken.
+    Write gxcnv1/2 sidecars under Output_WC / Output_WCX without touching
+    native WC/WCX flat filenames.
     """
     sample_root = analysis_dir / sample
     gxcnv1 = sample_root / "gxcnv1"
     gxcnv2 = sample_root / "gxcnv2"
-    # Also accept already-copied trees under outdir
     if not gxcnv1.is_dir() and (outdir / "gxcnv1").is_dir():
         gxcnv1 = outdir / "gxcnv1"
     if not gxcnv2.is_dir() and (outdir / "gxcnv2").is_dir():
@@ -141,33 +144,33 @@ def inject_portal_aliases(sample: str, analysis_dir: Path, outdir: Path) -> dict
     summary = {"wc": [], "wcx": [], "skipped": []}
 
     for group in GROUPS:
-        # ── WC ← gxcnv1 ──────────────────────────────────────────
+        # ── gxcnv1 sidecars (native WC flats untouched) ──────────────
         genome1 = gxcnv1 / f"{sample}_{group}_genome.png"
         calls1 = gxcnv1 / f"{sample}_{group}_calls.tsv"
-        wc_png = outdir / "Output_WC" / f"{sample}.wc.{group}_z.png"
-        wc_report = outdir / "Output_WC" / f"{sample}.wc.{group}.report.txt"
+        gx1_png = outdir / "Output_WC" / f"{sample}.gxcnv1.{group}_z.png"
+        gx1_report = outdir / "Output_WC" / f"{sample}.gxcnv1.{group}.report.txt"
 
         if genome1.is_file() or calls1.is_file():
-            if _copy_if_exists(genome1, wc_png):
-                summary["wc"].append(str(wc_png))
+            if _copy_if_exists(genome1, gx1_png):
+                summary["wc"].append(str(gx1_png))
             if calls1.is_file():
-                calls_to_wc_report(calls1, wc_report)
-                summary["wc"].append(str(wc_report))
+                calls_to_wc_report(calls1, gx1_report)
+                summary["wc"].append(str(gx1_report))
         else:
             summary["skipped"].append(f"gxcnv1/{group}")
 
-        # ── WCX ← gxcnv2 ─────────────────────────────────────────
+        # ── gxcnv2 sidecars (native WCX flats untouched) ─────────────
         genome2 = gxcnv2 / f"{sample}_{group}_genome.png"
         calls2 = gxcnv2 / f"{sample}_{group}_calls.tsv"
-        wcx_png = outdir / "Output_WCX" / f"{sample}.wcx.{group}.png"
-        wcx_bed = outdir / "Output_WCX" / f"{sample}.wcx.{group}_aberrations.bed"
+        gx2_png = outdir / "Output_WCX" / f"{sample}.gxcnv2.{group}.png"
+        gx2_bed = outdir / "Output_WCX" / f"{sample}.gxcnv2.{group}_aberrations.bed"
 
         if genome2.is_file() or calls2.is_file():
-            if _copy_if_exists(genome2, wcx_png):
-                summary["wcx"].append(str(wcx_png))
+            if _copy_if_exists(genome2, gx2_png):
+                summary["wcx"].append(str(gx2_png))
             if calls2.is_file():
-                calls_to_wcx_bed(calls2, wcx_bed)
-                summary["wcx"].append(str(wcx_bed))
+                calls_to_wcx_bed(calls2, gx2_bed)
+                summary["wcx"].append(str(gx2_bed))
         else:
             summary["skipped"].append(f"gxcnv2/{group}")
 
@@ -176,7 +179,7 @@ def inject_portal_aliases(sample: str, analysis_dir: Path, outdir: Path) -> dict
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Alias gxcnv1/2 into Portal WC/WCX flat filenames"
+        description="Write gxcnv1/2 sidecars beside native WC/WCX (no overwrite)"
     )
     ap.add_argument("--sample", required=True)
     ap.add_argument(
@@ -196,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     summary = inject_portal_aliases(args.sample, args.analysis_dir, args.outdir)
     print(
         f"[portal_cnv_alias] sample={args.sample} "
-        f"wc={len(summary['wc'])} wcx={len(summary['wcx'])} "
+        f"gxcnv1_sidecar={len(summary['wc'])} gxcnv2_sidecar={len(summary['wcx'])} "
         f"skipped={summary['skipped']}"
     )
     for p in summary["wc"] + summary["wcx"]:

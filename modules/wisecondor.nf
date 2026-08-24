@@ -110,6 +110,7 @@ process RUN_WC {
 
         if [ ! -f "${sample_name}.wc.${group}_z.png" ]; then
             echo "[WC] ERROR: plot step did not produce ${sample_name}.wc.${group}_z.png" >&2
+            echo "[WC] FAIL_REASON=WC plot missing for ${sample_name}/${group}" >&2
             exit 1
         fi
 
@@ -163,8 +164,9 @@ process RUN_WCX {
             if (g == "FEMALE" || g == "F" || g == "XX") { print "female"; exit }
         }' ${gender_txt})
         if [ -z "\${GENDER}" ]; then
-            echo "[WCX] Could not parse final_gender from ${gender_txt}; defaulting to female." >&2
-            GENDER="female"
+            echo "[WCX] ERROR: could not parse final_gender from ${gender_txt}" >&2
+            echo "[WCX] Refusing to default gender — wrong WCX reference would be used." >&2
+            exit 1
         fi
 
         # Actual NPZ naming convention in refs:
@@ -243,11 +245,17 @@ process RUN_WCX {
 
         # ken-nipt / Portal expect Output_WCX/{group}/{sample}.wcx.{group}.plots/chr*.png
         if [ ! -d "${sample_name}.wcx.${group}.plots" ]; then
-            echo "[WCX] WARNING: --plot did not create ${sample_name}.wcx.${group}.plots" >&2
-        else
-            N_CHR=\$(ls -1 "${sample_name}.wcx.${group}.plots"/chr*.png 2>/dev/null | wc -l | tr -d ' ')
-            echo "[WCX] plots dir ready: ${sample_name}.wcx.${group}.plots (\${N_CHR} chr*.png)"
+            echo "[WCX] ERROR: plot step did not create ${sample_name}.wcx.${group}.plots" >&2
+            echo "[WCX] FAIL_REASON=WCX plot missing for ${sample_name}/${group}" >&2
+            exit 1
         fi
+        N_CHR=\$(ls -1 "${sample_name}.wcx.${group}.plots"/chr*.png 2>/dev/null | wc -l | tr -d ' ')
+        if [ "\${N_CHR}" -eq 0 ]; then
+            echo "[WCX] ERROR: ${sample_name}.wcx.${group}.plots has no chr*.png" >&2
+            echo "[WCX] FAIL_REASON=WCX plot empty for ${sample_name}/${group}" >&2
+            exit 1
+        fi
+        echo "[WCX] plots dir ready: ${sample_name}.wcx.${group}.plots (\${N_CHR} chr*.png)"
 
         echo "[WCX] ${group} complete for ${sample_name}"
         """

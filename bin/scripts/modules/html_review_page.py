@@ -354,11 +354,12 @@ def generate_file_button(file_path, button_text, button_class="btn", sample_id=N
         return ""
 
     if file_path and file_path != "":
-        # If sample_id is provided, prepend it to create relative path
+        # Review HTML is published under Output_Result/; JSON paths are relative
+        # to the order root (Output_EZD/..., Output_QC/...). Use ../ so links
+        # resolve when opening the HTML from Output_Result/.
         if sample_id and not file_path.startswith('http'):
-            # Remove leading slash if present and prepend sample_id
             clean_path = file_path.lstrip('/')
-            adjusted_path = f"{sample_id}/{clean_path}"
+            adjusted_path = f"../{clean_path}"
         else:
             adjusted_path = file_path
         return f'<a href="{adjusted_path}" target="_blank" class="{button_class}">{button_text}</a>'
@@ -622,10 +623,16 @@ def generate_trisomy_details_section(data, sample_id=None):
             (f'{data_src}_ezd_plot', "EZD Plot", "btn btn-plot"),
             (f'{data_src}_prizm_chr_plot', "PRIZM Chr Plot", "btn btn-plot"),
             (f'{data_src}_prizm_10mb_plot', "PRIZM 10MB Plot", "btn btn-plot"),
+            (f'{data_src}_prizm_chr_heatmap', "PRIZM Chr Heatmap", "btn btn-plot"),
+            (f'{data_src}_prizm_10mb_heatmap', "PRIZM 10MB Heatmap", "btn btn-plot"),
             (f'{data_src}_wc_plot', "WC Plot", "btn btn-plot"),
             (f'{data_src}_wc_result', "WC Report", "btn btn-report"),
+            (f'{data_src}_gxcnv1_plot', "gxcnv1 Plot", "btn btn-plot"),
+            (f'{data_src}_gxcnv1_result', "gxcnv1 Calls", "btn btn-report"),
             (f'{data_src}_wcx_plot', "WCX Plot", "btn btn-image"),
-            (f'{data_src}_wcx_result', "WCX Report", "btn btn-report")
+            (f'{data_src}_wcx_result', "WCX Report", "btn btn-report"),
+            (f'{data_src}_gxcnv2_plot', "gxcnv2 Plot", "btn btn-image"),
+            (f'{data_src}_gxcnv2_result', "gxcnv2 Calls", "btn btn-report"),
         ]
         
         for file_key, button_text, button_class in file_buttons:

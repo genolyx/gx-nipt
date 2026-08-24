@@ -205,8 +205,8 @@ process GENDER_DECISION {
         """
         set -euo pipefail
 
-        # Weighted ensemble: YFF2 (primary) > SeqFF > Fragment FF > YFF1
-        # Gender decision: gd_2 (YFF2 ratio) is primary indicator
+        # Gender: gd_2 primary (+ YFF2/M-SeqFF inconsistency). FF: Male→YFF2, Female→M-SeqFF.
+        # gx-FF ensemble is NOT an input here (reporting-only via ff_ensemble.tsv).
         python3 /opt/gx-nipt/bin/scripts/modules/ff_gender_improved.py \\
             --mode gender_decision \\
             --yff1 ${yff1_txt} \\

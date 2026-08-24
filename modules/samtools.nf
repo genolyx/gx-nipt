@@ -4,51 +4,13 @@
  * =========================================================
  */
 
-process SAMTOOLS_SORT_INDEX {
-    tag "${sample_name}"
-    label 'process_medium'
-    label 'nipt_docker'
-
-    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${params.sample_name}.*.bam*"
-
-    input:
-        val  sample_name
-        path bam
-        val  suffix        // 'sorted', 'unique', etc.
-        val  analysisdir
-
-    output:
-        path "${sample_name}.${suffix}.bam",     emit: bam
-        path "${sample_name}.${suffix}.bam.bai", emit: bai
-
-    script:
-        def threads = task.cpus
-        def mem     = task.memory.toGiga().intValue()
-        """
-        set -euo pipefail
-
-        samtools sort \\
-            -@ ${threads} \\
-            -m ${mem}G \\
-            -o ${sample_name}.${suffix}.bam \\
-            ${bam}
-
-        samtools index \\
-            -@ ${threads} \\
-            ${sample_name}.${suffix}.bam
-
-        echo "[SAMTOOLS] Sort+Index complete: ${sample_name}.${suffix}.bam"
-        """
-}
-
 process SAMTOOLS_FILTER_UNIQUE {
     tag "${sample_name}"
     label 'process_medium'
     label 'nipt_docker'
 
     publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${params.sample_name}.unique.bam*"
+               pattern: "${sample_name}.unique.bam*"
 
     input:
         val  sample_name
@@ -84,7 +46,7 @@ process SAMTOOLS_PROPER_PAIRED {
     label 'nipt_docker'
 
     publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${params.sample_name}.proper_paired.bam*"
+               pattern: "${sample_name}.proper_paired.bam*"
 
     input:
         val  sample_name
@@ -114,6 +76,44 @@ process SAMTOOLS_PROPER_PAIRED {
 }
 
 /*
+ * Ensure a BAM index exists for --from_bam re-entry.
+ * Staging only the BAM would leave a null .bai and break SPLIT.
+ * If a sibling .bai is provided, reuse it; otherwise index in-place.
+ */
+process SAMTOOLS_ENSURE_INDEX {
+    tag "${sample_name}"
+    label 'process_low'
+    label 'nipt_docker'
+
+    input:
+        val  sample_name
+        path bam
+        path optional_bai   // real .bai or empty stub "NO_BAI"
+
+    output:
+        path "${bam}.bai", emit: bai
+
+    script:
+        def threads = task.cpus
+        """
+        set -euo pipefail
+
+        if [ -s "${optional_bai}" ] && [ "\$(basename "${optional_bai}")" != "NO_BAI" ]; then
+            cp -L "${optional_bai}" "${bam}.bai"
+            echo "[SAMTOOLS] Reusing existing index for ${bam}"
+        else
+            echo "[SAMTOOLS] Index missing — running samtools index for ${bam}"
+            samtools index -@ ${threads} ${bam}
+        fi
+        """
+
+    stub:
+        """
+        touch ${bam}.bai
+        """
+}
+
+/*
  * TLEN-based split: proper_paired.bam → of_orig / of_fetus / of_mom
  *
  *   of_orig    : proper_paired.bam → Uniform_2017_allY.bed (-L) 필터
@@ -129,7 +129,7 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
     label 'nipt_docker'
 
     publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${params.sample_name}.of_*.bam*"
+               pattern: "${sample_name}.of_*.bam*"
 
     input:
         val  sample_name

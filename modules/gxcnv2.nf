@@ -2,79 +2,25 @@
  * gxcnv2 Module
  *
  * WisecondorX-core CNV detection engine, independent of gxcnv.
- * Reuses BED files produced by RUN_WCX — no duplicate predict step needed.
+ * Reuses BED files from RUN_WCX — no duplicate convert/predict.
  *
  * Algorithm (gxcnv2_predict.py --bins-bed mode):
- *   Reads pre-computed WCX BED files: _bins.bed, _segments.bed, _aberrations.bed
- *   Enhancements: MAD-based robust z-score · MAPD metric · log2(ratio) output
+ *   Reads WCX BED files: _bins.bed, _segments.bed, _aberrations.bed
+ *   Enhancements: MAD-based robust z-score · MAPD · log2(ratio)
  *
  * Visualisation (plot_gxcnv2.py):
- *   log2(ratio) filled-area genome-wide track · teal/amber/violet palette
- *   KDE QC plot · CBS segment overlay (distinct from gxcnv and WCX visuals)
+ *   log2(ratio) genome-wide track · teal/amber/violet palette · KDE QC
  *
  * Data flow:
  *   RUN_WCX  →  (bins.bed, segments.bed, aberrations.bed)  →  GXCNV2_PREDICT  →  TSV
  *   GXCNV2_PREDICT  →  (bins.tsv, calls.tsv)  →  GXCNV2_PLOT  →  PNG
  *
- * WCX result = gxcnv2  (identical underlying calls, gxcnv2-style visuals)
+ * WCX result = gxcnv2  (identical underlying calls, gxcnv2 visuals)
  */
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 1: BAM → sample NPZ  (same WisecondorX convert as RUN_WCX)
-// ─────────────────────────────────────────────────────────────────────────────
-process GXCNV2_CONVERT {
-    tag "${sample_id}"
-    label 'process_low'
-    label 'nipt_docker'
-
-    input:
-    tuple val(sample_id), path(bam), path(bai)
-    val   binsize   // must match the reference (200000)
-
-    output:
-    tuple val(sample_id), path("${sample_id}.gxcnv2.npz"), emit: npz
-    path  "${sample_id}.gxcnv2_convert.log",               emit: log
-
-    script:
-    """
-    set -euo pipefail
-
-    export TMPDIR="\${NXF_TASK_WORKDIR}"
-    export MPLCONFIGDIR="\${NXF_TASK_WORKDIR}"
-
-    READ_COUNT=\$(samtools view -c ${bam})
-    if [ "\${READ_COUNT}" -eq 0 ]; then
-        echo "[GXCNV2] ${sample_id} BAM is empty — skipping convert." >&2
-        touch ${sample_id}.gxcnv2.npz
-        touch ${sample_id}.gxcnv2_convert.log
-        exit 0
-    fi
-
-    # WisecondorX convert appends .npz automatically; pass prefix only
-    WisecondorX convert \\
-        ${bam} \\
-        ${sample_id}.gxcnv2 \\
-        --binsize ${binsize} \\
-        2>&1 | tee ${sample_id}.gxcnv2_convert.log
-
-    if [ ! -s "${sample_id}.gxcnv2.npz" ]; then
-        echo "ERROR: WisecondorX convert produced empty NPZ for ${sample_id}" >&2
-        exit 1
-    fi
-    """
-
-    stub:
-    """
-    python3 -c "import numpy as np; np.savez_compressed('${sample_id}.gxcnv2', **{'1': np.zeros(100, dtype='int32')})"
-    touch ${sample_id}.gxcnv2_convert.log
-    """
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 2: Parse WCX BED files from RUN_WCX into gxcnv2 TSV
-//         Receives pre-computed WCX BED files, no duplicate WCX predict needed.
+// Parse WCX BED files from RUN_WCX into gxcnv2 TSV
 // ─────────────────────────────────────────────────────────────────────────────
 process GXCNV2_PREDICT {
     tag "${sample_id}"
@@ -141,7 +87,8 @@ process GXCNV2_PREDICT {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 3: Plot — genome-wide + per-chromosome log2(ratio) figures
+// ─────────────────────────────────────────────────────────────────────────────
+// Plot — genome-wide + per-chromosome log2(ratio) figures
 // ─────────────────────────────────────────────────────────────────────────────
 process GXCNV2_PLOT {
     tag "${sample_id}"
@@ -174,6 +121,14 @@ process GXCNV2_PLOT {
         --bins  ${bins_tsv} \\
         --calls ${calls_tsv} \\
         -o      ${sample_id}
+
+    for f in ${sample_id}_genome.png ${sample_id}_qc.png; do
+        if [ ! -s "\$f" ]; then
+            echo "[GXCNV2_PLOT] ERROR: missing or empty plot: \$f" >&2
+            echo "[GXCNV2_PLOT] FAIL_REASON=gxcnv2 plot failed for ${sample_id} (\$f)" >&2
+            exit 1
+        fi
+    done
     """
 
     stub:

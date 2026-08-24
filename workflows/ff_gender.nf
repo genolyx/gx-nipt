@@ -7,14 +7,15 @@
  *    YFF2        – Adjusted YFF via wig normalisation (gd_2)
  *    seqFF       – Sequence-based FF from GC-corrected coverage
  *    Fragment FF – Short/long fragment ratio (gd_4)
- *    gx-FF       – LightGBM + DNN ensemble (NEW)
+ *    gx-FF       – LightGBM + DNN ensemble (optional; --gxff-model)
  *
- *  Final FF = GXFF_ENSEMBLE(seqFF, gx-FF)
- *    - Low-FF (<5%): gx-FF only (better trained for low-FF regime)
- *    - Normal:       weighted ensemble (gx-FF 60%, seqFF 40%)
- *    - gx-FF QC fail: fall back to seqFF
+ *  Optional gx-FF ensemble (reporting only when model provided):
+ *    GXFF_ENSEMBLE(seqFF, gx-FF) → ff_ensemble.tsv / JSON gxff
+ *    Low-FF (<5%): gx-FF only; else 0.6·gx-FF + 0.4·seqFF; QC fail → seqFF
  *
- *  Gender decision uses FF_FINAL from ensemble.
+ *  Gender + authoritative FF (GENDER_DECISION) do NOT use gx-FF:
+ *    Gender: gd_2 (YFF2) + YFF2/M-SeqFF inconsistency check
+ *    FF:     Male → YFF2; Female → M-SeqFF
  * =========================================================
  */
 
@@ -31,8 +32,7 @@ workflow FF_GENDER_WORKFLOW {
         sample_name   // val: sample identifier
         ch_bam        // path: proper_paired.bam
         ch_bai        // path: proper_paired.bam.bai
-        ch_wig_norm   // path: 50kb wig normalization file from HMMcopy (or NO_FILE)
-        ch_bincount   // path: 50kb bin count file from HMMcopy (or NO_FILE)
+        ch_wig_norm   // path: 50kb wig normalization from HMMcopy (YFF2 + gx-FF features)
         ch_config     // path: pipeline_config.json
         labcode       // val: lab identifier
         analysisdir   // val: output directory root

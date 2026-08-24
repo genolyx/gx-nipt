@@ -515,7 +515,7 @@ def run_ezd_group(
 
         dpi = config.get("EZD", {}).get("resolution_dpi", 200)
 
-        # 4. Plotting
+        # 4. Plotting — failure must abort the process (Portal needs plots)
         try:
             plot_chr_scatter_grid(
                 chr_table_dir,
@@ -528,7 +528,18 @@ def run_ezd_group(
             )
             # plot_ezd_interactive(ezd_df, join(output_dir, f'{group}_EZD_plot.html'))
         except Exception as plot_error:
-            logger.warning(f"Plotting failed: {plot_error}")
+            logger.error(
+                f"EZD plotting failed for {sample_name}/{group}: {plot_error}"
+            )
+            raise RuntimeError(
+                f"EZD plot failed for {sample_name}/{group}: {plot_error}"
+            ) from plot_error
+
+        grid_png = join(output_dir, f"{group}_EZD_grid.png")
+        if not os.path.isfile(grid_png) or os.path.getsize(grid_png) == 0:
+            raise RuntimeError(
+                f"EZD plot missing or empty for {sample_name}/{group}: {grid_png}"
+            )
 
         logger.info(f"EZD group analysis completed for {sample_name} - {group}")
 

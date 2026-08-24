@@ -49,7 +49,7 @@ ALGORITHM_ONLY="false"
 FORCE="false"
 FRESH="false"
 GXFF_MODEL=""
-RUN_GXCNV="false"
+RUN_GXCNV="true"           # matches main.nf / daemon nipt_run_gxcnv default
 RUN_GXCNV1=""              # empty = use main.nf default (true)
 RUN_GXCNV2="true"          # gxcnv2 enabled by default (matches main.nf default)
 GXCNV2_ZSCORE=""           # empty = use main.nf default (3.5)
@@ -93,19 +93,19 @@ Optional:
   --from-bam <path>          Start from existing proper_paired BAM
   --algorithm-only           Skip alignment; reuse existing BAM
   --force                    Re-run even if <order_id>.completed marker exists
-  --fresh                    Clear this sample's work/ + session (safe for concurrent runs)
+  --fresh                    Clear completed marker + this sample's work/ + session (safe for concurrent runs)
   --no-resume                Skip -resume (re-run all steps; keep per-sample work/ intact)
   --gxff-model <.pkl>        Enable gx-FF (LightGBM + DNN) ensemble
                              (leave unset to fall back to seqFF-only)
-  --run-gxcnv                Enable gx-cnv parallel CNV track
+  --run-gxcnv                Enable gx-cnv parallel CNV track (default: enabled)
                              Reference auto-resolved by gender:
                                <ref-dir>/labs/<labcode>/GXCNV/{female|male}/reference.npz
-  --no-gxcnv                 Disable gx-cnv (default)
-  --run-gxcnv1               Enable gxcnv1 / WisecondorX CNV track
+  --no-gxcnv                 Disable gx-cnv
+  --run-gxcnv1               Enable gxcnv1 (WC-track CNV visuals)
   --no-gxcnv1                Disable gxcnv1
-  --run-gxcnv2               Enable gxcnv2 (default: enabled)
+  --run-gxcnv2               Enable gxcnv2 (WCX-track CNV visuals; default: enabled)
   --no-gxcnv2                Disable gxcnv2
-  --gxcnv2-zscore <float>    Z-score threshold for gxcnv2 calling (default: 3.5)
+  --gxcnv2-zscore <float>    Z-score threshold for gxcnv2 calling (default: 6.0)
   --max-cpus <n>             Max CPUs per task (default: 32)
   --samtools-threads <n>     samtools sort threads (default: max_cpus-1)
   --samtools-memory <size>   samtools sort memory per thread (default: 2G)
@@ -114,7 +114,7 @@ Optional:
   --use-ssd                  Enable SSD scratch (Strategy B)
   --scratch-dir <path>       SSD mount point (default: /tmp/nipt_scratch)
   --ssd-max-usage-gb <n>     Abort if SSD usage exceeds this (default: 200)
-  --ref-dir <path>           Reference data root on host (default: /data/reference)
+  --ref-dir <path>           Reference data root on host (default: <repo>/refs)
                              Layout expected:
                                <ref-dir>/genomes/hg19/hg19.fa(+BWA index)
                                <ref-dir>/hmmcopy/hg19.{50kb,10mb}.{gc,map}.wig
@@ -158,7 +158,6 @@ while [[ $# -gt 0 ]]; do
         --gxcnv-reference|--gxcnv-model)
                              echo "[run_nipt] --gxcnv-reference is deprecated; use --run-gxcnv (reference auto-resolved by gender)" >&2
                              RUN_GXCNV="true"; shift 2 ;;
-        --no-gxcnv2)         RUN_GXCNV2="false"; shift ;;
         --gxcnv2-zscore)     GXCNV2_ZSCORE="$2"; shift 2 ;;
         --no-wcx)            RUN_WCX="false"; shift ;;
         --no-wc)             RUN_WC="false"; shift ;;
@@ -239,9 +238,18 @@ progress "START" "0" "order=${ORDER_ID} work=${WORK_DIR} labcode=${LABCODE}"
 
 # -----------------------------------------------------------
 # Completion-marker guard (fast-return if already done)
+#
+# --force / --fresh both mean "run again": skip this guard and
+# drop the marker so a later crash cannot leave a stale success
+# signal (daemon re-analysis uses --fresh without --force).
 # -----------------------------------------------------------
-if [[ "$FORCE" == "false" && -f "$COMPLETED_FILE" ]]; then
-    echo "[run_nipt] Already completed: $COMPLETED_FILE (use --force to re-run)"
+if [[ "$FORCE" == "true" || "$FRESH" == "true" ]]; then
+    if [[ -f "$COMPLETED_FILE" ]]; then
+        rm -f "$COMPLETED_FILE"
+        echo "[run_nipt] Cleared completed marker for re-run (force=${FORCE} fresh=${FRESH})"
+    fi
+elif [[ -f "$COMPLETED_FILE" ]]; then
+    echo "[run_nipt] Already completed: $COMPLETED_FILE (use --force or --fresh to re-run)"
 
     # If the daemon-facing JSON is missing (e.g. pipeline was run directly
     # via nextflow without run_nipt.sh), recover it from the published result.
@@ -335,7 +343,18 @@ progress "PREPARED" "5" "inputs ready under ${HOST_FASTQ_DIR}"
 # so concurrent samples collide on the same session LOCK.
 # Isolate work + session UUID + nextflow.log per sample instead.
 # -----------------------------------------------------------
-NF_WORK_DIR="${HOST_ANALYSIS_DIR}/work"
+# -----------------------------------------------------------
+# Nextflow work directory
+# -----------------------------------------------------------
+# Default: per-sample under analysis/ (HDD).
+# --use-ssd: place work on SSD so BAM-heavy tasks hit scratch;
+#            main.nf onComplete removes <scratch>/nf_work/<sample>.
+# cleanup=false in ssd_scratch profile so -resume still works.
+if [[ "$USE_SSD" == "true" ]]; then
+    NF_WORK_DIR="${SCRATCH_DIR}/nf_work/${SAMPLE_NAME}"
+else
+    NF_WORK_DIR="${HOST_ANALYSIS_DIR}/work"
+fi
 NF_SESSION_FILE="${HOST_LOG_DIR}/nextflow.session"
 NF_LOG_FILE="${HOST_LOG_DIR}/nextflow.log"
 mkdir -p "$NF_WORK_DIR" "$HOST_LOG_DIR"
@@ -397,13 +416,17 @@ if [[ -n "$MAX_CPUS" ]];           then NF_ARGS+=( --max_cpus "$MAX_CPUS" ); fi
 if [[ -n "$SAMTOOLS_THREADS" ]];   then NF_ARGS+=( --samtools_threads "$SAMTOOLS_THREADS" ); fi
 if [[ -n "$SAMTOOLS_MEMORY" ]];    then NF_ARGS+=( --samtools_memory "$SAMTOOLS_MEMORY" ); fi
 if [[ -n "$PICARD_MEMORY" ]];      then NF_ARGS+=( --picard_memory "$PICARD_MEMORY" ); fi
-if [[ -n "$REF_DIR" ]];            then NF_ARGS+=( --ref_dir "$REF_DIR" ); fi
 
 # -----------------------------------------------------------
 # Reference-directory preflight
 # -----------------------------------------------------------
-# Use the CLI override if provided, else inherit nextflow.config default.
-EFFECTIVE_REF_DIR="${REF_DIR:-/data/reference}"
+# Keep preflight + Nextflow on the same tree. Default matches
+# nextflow.config params.ref_dir (= <repo>/refs). Daemon usually
+# overrides via --ref-dir / NIPT_REF_DIR.
+DEFAULT_REF_DIR="${REPO_DIR}/refs"
+EFFECTIVE_REF_DIR="${REF_DIR:-${DEFAULT_REF_DIR}}"
+NF_ARGS+=( --ref_dir "$EFFECTIVE_REF_DIR" )
+
 REQUIRED_REF_PATHS=(
     "${EFFECTIVE_REF_DIR}/genomes/hg19/hg19.fa"
     "${EFFECTIVE_REF_DIR}/hmmcopy/hg19.50kb.gc.wig"
@@ -473,11 +496,62 @@ popd >/dev/null
 
 if [[ "$NF_EXIT" -ne 0 ]]; then
     echo "[run_nipt] Nextflow failed with exit code $NF_EXIT" >&2
+    rm -f "$COMPLETED_FILE"
+
+    # Prefer an explicit FAIL_REASON so daemon + platform see why the run
+    # failed (e.g. plot missing), not just a generic nextflow exit code.
+    # Order: task FAIL_REASON → nextflow.log FAIL_REASON → .command.err
+    # snippets → nextflow ERROR summary → fallback exit code.
+    FAIL_REASON=""
+    if [[ -d "$NF_WORK_DIR" ]]; then
+        ERR_FILE="$(
+            find "$NF_WORK_DIR" \( -name '.command.err' -o -name '.command.log' \) \
+                -type f -printf '%T@ %p\n' 2>/dev/null \
+                | sort -nr | head -20 | cut -d' ' -f2- || true
+        )"
+        while IFS= read -r _ef; do
+            [[ -z "$_ef" || ! -s "$_ef" ]] && continue
+            FAIL_REASON="$(
+                grep -E 'FAIL_REASON=' "$_ef" 2>/dev/null | tail -1 \
+                    | sed -E 's/.*FAIL_REASON=//' || true
+            )"
+            [[ -n "$FAIL_REASON" ]] && break
+        done <<< "$ERR_FILE"
+    fi
+    if [[ -z "$FAIL_REASON" && -f "$NF_LOG_FILE" ]]; then
+        FAIL_REASON="$(
+            grep -E 'FAIL_REASON=' "$NF_LOG_FILE" 2>/dev/null | tail -1 \
+                | sed -E 's/.*FAIL_REASON=//' || true
+        )"
+    fi
+    if [[ -z "$FAIL_REASON" && -d "$NF_WORK_DIR" ]]; then
+        ERR_FILE="$(
+            find "$NF_WORK_DIR" -name '.command.err' -type f -printf '%T@ %p\n' 2>/dev/null \
+                | sort -nr | head -1 | cut -d' ' -f2- || true
+        )"
+        if [[ -n "$ERR_FILE" && -s "$ERR_FILE" ]]; then
+            FAIL_REASON="$(
+                grep -E 'ERROR:|Error |Traceback|RuntimeError' "$ERR_FILE" 2>/dev/null \
+                    | tail -5 | tr '\n' ' | ' | sed -E 's/[[:space:]]+/ /g; s/ \| $//' \
+                || tail -5 "$ERR_FILE" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g'
+            )"
+        fi
+    fi
+    if [[ -z "$FAIL_REASON" && -f "$NF_LOG_FILE" ]]; then
+        FAIL_REASON="$(
+            grep -E 'ERROR ~|Caused by:|Error executing process' "$NF_LOG_FILE" 2>/dev/null \
+                | tail -3 | tr '\n' ' | ' | sed -E 's/[[:space:]]+/ /g; s/ \| $//' || true
+        )"
+    fi
+    [[ -z "$FAIL_REASON" ]] && FAIL_REASON="nextflow exit ${NF_EXIT}"
+
     {
         echo "Pipeline failed for ${ORDER_ID} at $(_ts)"
-        echo "Reason: nextflow exit ${NF_EXIT}"
+        echo "Reason: ${FAIL_REASON}"
+        echo "Exit: ${NF_EXIT}"
     } >> "$FAILED_FILE"
-    progress "FAILED" "" "nextflow exit ${NF_EXIT}"
+    echo "[run_nipt] FAIL_REASON=${FAIL_REASON}" >&2
+    progress "FAILED" "" "${FAIL_REASON}"
     exit "$NF_EXIT"
 fi
 
@@ -499,6 +573,7 @@ fi
 
 if [[ ! -f "$RESULT_JSON_SRC" ]]; then
     echo "[run_nipt] ERROR: report JSON not produced: $RESULT_JSON_SRC" >&2
+    rm -f "$COMPLETED_FILE"
     {
         echo "Pipeline completed but report JSON missing."
         echo "Expected: $RESULT_JSON_SRC"

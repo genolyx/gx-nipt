@@ -12,10 +12,10 @@
 
 include { DOWNSAMPLE_FASTQ }         from '../modules/downsample'
 include { BWA_ALIGN }                from '../modules/bwa'
-include { SAMTOOLS_SORT_INDEX }      from '../modules/samtools'
 include { PICARD_MARKDUP }           from '../modules/picard'
 include { SAMTOOLS_FILTER_UNIQUE }   from '../modules/samtools'
 include { SAMTOOLS_PROPER_PAIRED }   from '../modules/samtools'
+include { SAMTOOLS_ENSURE_INDEX }    from '../modules/samtools'
 include { SAMTOOLS_SPLIT_FETUS_MOM } from '../modules/samtools'
 include { SCRATCH_SETUP;
           SCRATCH_MOVE_FINAL }       from '../modules/scratch'
@@ -32,16 +32,16 @@ workflow ALIGN_WORKFLOW {
     main:
         // ── Case 1: Start from existing proper_paired.bam ─
         if (params.from_bam) {
-            ch_proper_bam     = ch_bam
-            // When re-entering from an existing BAM, the index may or may
-            // not be alongside. Try to pick it up; SPLIT process below
-            // depends on .bai being present.
-            ch_proper_bai = ch_bam.map { b ->
+            ch_proper_bam = ch_bam
+            // Sibling .bai may be absent; ENSURE_INDEX indexes when needed
+            // so SPLIT never receives a null bai.
+            ch_optional_bai = ch_bam.map { b ->
                 def idx = file("${b}.bai")
-                idx.exists() ? idx : null
+                idx.exists() ? idx : file('NO_BAI')
             }
-            ch_use_ssd_result = false
-            ch_sorted_bam     = ch_proper_bam   // no pre-dedup BAM available; fall back
+            SAMTOOLS_ENSURE_INDEX(sample_name, ch_proper_bam, ch_optional_bai)
+            ch_proper_bai = SAMTOOLS_ENSURE_INDEX.out.bai
+            ch_sorted_bam = ch_proper_bam   // no pre-dedup BAM available; fall back
 
         } else {
             // ── Case 2: Full alignment pipeline ───────────
@@ -78,9 +78,8 @@ workflow ALIGN_WORKFLOW {
                 labcode,
                 analysisdir
             )
-            // BWA_ALIGN now outputs a coordinate-sorted BAM directly
-            // (bwa-mem2 | samtools sort pipe, matching ken-nipt's approach).
-            // SAMTOOLS_SORT_INDEX is no longer needed here.
+            // BWA_ALIGN outputs a coordinate-sorted BAM directly
+            // (bwa-mem2 | samtools sort pipe, matching ken-nipt).
             ch_sorted_bam = BWA_ALIGN.out.bam
 
             // ── Step 4: Picard MarkDuplicates ──────────────

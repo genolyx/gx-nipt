@@ -10,7 +10,7 @@ process BWA_ALIGN {
     label 'nipt_docker'
 
     publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${params.sample_name}.sorted.bam*"
+               pattern: "${sample_name}.sorted.bam*"
 
     input:
         val  sample_name

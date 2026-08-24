@@ -11,8 +11,8 @@ Portal reads plot paths from result JSON, e.g.:
 
 gx-nipt analysis keeps group subdirs (Output_EZD/orig/...). This script
 hoists Portal-facing files to the flat ken-nipt layout, re-syncs gxcnv1/2
-from analysis (in case COPY raced ahead of PLOT publishDir), then runs
-portal_cnv_alias for WC/WCX flat aliases.
+from analysis (in case COPY raced ahead of PLOT publishDir), then writes
+gxcnv1/2 sidecars beside native WC/WCX flats (never overwriting natives).
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ def flatten_portal_plots(outdir: Path, sample: str) -> list[str]:
             if _copy_file(src, dst):
                 written.append(str(dst))
 
-    # ── WC flat hoist (native WC files; gxcnv1 alias may overwrite later) ─
+    # ── WC flat hoist (native WC only; gxcnv1 uses sidecars / gxcnv1/) ─
     for group in GROUPS:
         for fname in (
             f"{sample}.wc.{group}_z.png",
@@ -190,15 +190,6 @@ def apply_portal_layout(sample: str, analysis_dir: Path, outdir: Path) -> dict:
     flattened = flatten_portal_plots(outdir, sample)
     alias = inject_portal_aliases(sample, analysis_dir, outdir)
 
-    # Re-check WCX flats after alias (gxcnv2 genome may have been synced late)
-    for group in GROUPS:
-        flat = outdir / "Output_WCX" / f"{sample}.wcx.{group}.png"
-        if flat.is_file():
-            continue
-        genome = outdir / "gxcnv2" / f"{sample}_{group}_genome.png"
-        if _copy_file(genome, flat):
-            flattened.append(str(flat))
-
     return {
         "synced": synced,
         "flattened": flattened,
@@ -216,8 +207,12 @@ def verify_portal_paths(outdir: Path, sample: str) -> list[str]:
             f"Output_EZD/{group}_EZD_grid.png",
             f"Output_PRIZM/{sample}_{group}_chromosome_line.png",
             f"Output_PRIZM/{sample}_{group}_10mb_line.png",
+            f"Output_PRIZM/{sample}_{group}_chromosome_heatmap.png",
+            f"Output_PRIZM/{sample}_{group}_10mb_heatmap.png",
             f"Output_WC/{sample}.wc.{group}_z.png",
             f"Output_WCX/{sample}.wcx.{group}.png",
+            f"gxcnv1/{sample}_{group}_genome.png",
+            f"gxcnv2/{sample}_{group}_genome.png",
         ]
         for rel in expected:
             if not (outdir / rel).is_file():
