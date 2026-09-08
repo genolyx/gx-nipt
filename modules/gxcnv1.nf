@@ -27,7 +27,7 @@ process GXCNV1_PREDICT {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir {
+    publishDir path: {
         def _parts = sample_id.toString().tokenize('_')
         "${analysisdir}/${_parts[0..-2].join('_')}/gxcnv1"
     }, mode: 'copy', pattern: "*.tsv", overwrite: true
@@ -94,7 +94,7 @@ process GXCNV1_PLOT {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir {
+    publishDir path: {
         def _p = sample_id.toString().tokenize('_')
         "${analysisdir}/${_p[0..-2].join('_')}/gxcnv1"
     }, mode: 'copy', overwrite: true, pattern: "*.png"

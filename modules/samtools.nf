@@ -9,8 +9,8 @@ process SAMTOOLS_FILTER_UNIQUE {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.unique.bam*"
+    publishDir path: { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "*.unique.bam*"
 
     input:
         val  sample_name
@@ -45,8 +45,8 @@ process SAMTOOLS_PROPER_PAIRED {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.proper_paired.bam*"
+    publishDir path: { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "*.proper_paired.bam*"
 
     input:
         val  sample_name
@@ -99,7 +99,11 @@ process SAMTOOLS_ENSURE_INDEX {
         set -euo pipefail
 
         if [ -s "${optional_bai}" ] && [ "\$(basename "${optional_bai}")" != "NO_BAI" ]; then
-            cp -L "${optional_bai}" "${bam}.bai"
+            # from-bam often stages the sibling as already "${bam}.bai";
+            # cp onto itself fails with "are the same file".
+            if [ "${optional_bai}" != "${bam}.bai" ]; then
+                cp -L "${optional_bai}" "${bam}.bai"
+            fi
             echo "[SAMTOOLS] Reusing existing index for ${bam}"
         else
             echo "[SAMTOOLS] Index missing — running samtools index for ${bam}"
@@ -128,8 +132,8 @@ process SAMTOOLS_SPLIT_FETUS_MOM {
     label 'process_medium'
     label 'nipt_docker'
 
-    publishDir { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
-               pattern: "${sample_name}.of_*.bam*"
+    publishDir path: { "${analysisdir}/${sample_name}" }, mode: 'copy', overwrite: true,
+               pattern: "*.of_*.bam*"
 
     input:
         val  sample_name

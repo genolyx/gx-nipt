@@ -261,11 +261,11 @@ process GXCNV_PREDICT {
 
     // sample_id is composite "{sample}_{group}"; publish under base sample so
     // generate_json_output.py can find analysisdir/{sample}/gxcnv/{composite}_*.tsv
-    publishDir {
+    publishDir path: {
         def _parts = sample_id.toString().tokenize('_')
         "${analysisdir}/${_parts[0..-2].join('_')}/gxcnv"
     }, mode: 'copy', pattern: "*.tsv", overwrite: true
-    publishDir {
+    publishDir path: {
         def _parts = sample_id.toString().tokenize('_')
         "${analysisdir}/${_parts[0..-2].join('_')}/gxcnv"
     }, mode: 'copy', pattern: "*.txt", overwrite: true
@@ -370,7 +370,7 @@ process GXCNV_COMPARE {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir { "${analysisdir}/${sample_id}/gxcnv" }, mode: 'copy', overwrite: true
+    publishDir path: { "${analysisdir}/${sample_id}/gxcnv" }, mode: 'copy', overwrite: true
 
     input:
     tuple val(sample_id),
@@ -527,7 +527,7 @@ process GXCNV_PLOT {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir {
+    publishDir path: {
         def _p = sample_id.toString().tokenize('_')
         "${analysisdir}/${_p[0..-2].join('_')}/gxcnv"
     }, mode: 'copy', overwrite: true, pattern: "*.png"
@@ -553,6 +553,8 @@ process GXCNV_PLOT {
         --calls ${calls_tsv} \\
         -o      ${sample_id}
 
+    # Upstream GXCNV_PREDICT may emit ##gxcnv_skip stubs when refs are missing;
+    # plot_gxcnv writes non-empty placeholder PNGs in that case.
     for f in ${sample_id}_genome.png ${sample_id}_regions.png ${sample_id}_qc.png; do
         if [ ! -s "\$f" ]; then
             echo "[GXCNV_PLOT] ERROR: missing or empty plot: \$f" >&2
@@ -560,6 +562,9 @@ process GXCNV_PLOT {
             exit 1
         fi
     done
+    if grep -q '^##gxcnv_skip=true' "${bins_tsv}" 2>/dev/null; then
+        echo "[GXCNV_PLOT] NOTE: bins marked gxcnv_skip — stub plots only for ${sample_id}"
+    fi
     """
 
     stub:

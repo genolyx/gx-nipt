@@ -6,14 +6,16 @@
  *    output/{work_dir}/{sample_name}/
  *      ├── Output_QC/
  *      ├── Output_FF/
- *      ├── Output_EZD/{orig,fetus,mom}_EZD_grid.png   (+ nested group dirs kept)
+ *      ├── Output_EZD/{orig,fetus,mom}_EZD_grid.png   (+ nested group dirs kept on disk)
  *      ├── Output_PRIZM/{sample}_{group}_*.png
  *      ├── Output_WC/{sample}.wc.{group}_z.png
  *      ├── Output_WCX/{sample}.wcx.{group}.png
- *      ├── Output_hmmcopy/
  *      ├── Output_MD/
  *      ├── gxcnv1/ gxcnv2/
  *      └── Output_Result/
+ *
+ *  Note: Output_hmmcopy stays under analysis/ only (PRIZM input). It is NOT
+ *  copied here — package_output_tar.py also excludes it from .output.tar.
  * =========================================================
  */
 
@@ -22,7 +24,7 @@ process GENERATE_JSON {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir { "${analysisdir}/${sample_name}/Output_Result" }, mode: 'copy', overwrite: true
+    publishDir path: { "${analysisdir}/${sample_name}/Output_Result" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -77,7 +79,7 @@ process GENERATE_HTML {
     label 'process_low'
     label 'nipt_docker'
 
-    publishDir { "${analysisdir}/${sample_name}/Output_Result" }, mode: 'copy', overwrite: true
+    publishDir path: { "${analysisdir}/${sample_name}/Output_Result" }, mode: 'copy', overwrite: true
 
     input:
         val  sample_name
@@ -160,7 +162,6 @@ process COPY_TO_OUTPUT {
         mkdir -p ${outdir}/Output_WCX/orig
         mkdir -p ${outdir}/Output_WCX/fetus
         mkdir -p ${outdir}/Output_WCX/mom
-        mkdir -p ${outdir}/Output_hmmcopy
         mkdir -p ${outdir}/Output_MD
         mkdir -p ${outdir}/Output_Result
         mkdir -p ${outdir}/gxcnv1
@@ -174,7 +175,7 @@ process COPY_TO_OUTPUT {
         _copy ${analysisdir}/${sample_name}/Output_PRIZM   ${outdir}/Output_PRIZM
         _copy ${analysisdir}/${sample_name}/Output_WC      ${outdir}/Output_WC
         _copy ${analysisdir}/${sample_name}/Output_WCX     ${outdir}/Output_WCX
-        _copy ${analysisdir}/${sample_name}/Output_hmmcopy ${outdir}/Output_hmmcopy
+        # Output_hmmcopy intentionally omitted (intermediate; kept under analysis/)
         _copy ${analysisdir}/${sample_name}/Output_MD      ${outdir}/Output_MD
         _copy ${analysisdir}/${sample_name}/gxcnv1         ${outdir}/gxcnv1
         _copy ${analysisdir}/${sample_name}/gxcnv2         ${outdir}/gxcnv2

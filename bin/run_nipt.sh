@@ -361,8 +361,29 @@ mkdir -p "$NF_WORK_DIR" "$HOST_LOG_DIR"
 
 # Fresh run: purge *this sample's* work/session only — never wipe
 # REPO_DIR/.nextflow (shared history used by other concurrent samples).
+# Task containers may leave root-owned files (pre-NXF_DOCKER_TASK_USER);
+# plain rm as ken then fails — fall back to a one-shot root docker rm.
 if [[ "$FRESH" == "true" ]]; then
-    rm -rf "$NF_WORK_DIR"
+    if [[ -e "$NF_WORK_DIR" ]]; then
+        if ! rm -rf "$NF_WORK_DIR" 2>/dev/null; then
+            if command -v docker >/dev/null 2>&1 && [[ -S /var/run/docker.sock ]]; then
+                echo "[run_nipt] Fresh: work/ not fully removable as $(id -un); clearing via docker as root"
+                _parent="$(dirname "$NF_WORK_DIR")"
+                _base="$(basename "$NF_WORK_DIR")"
+                docker run --rm --user 0:0 \
+                    -v "${_parent}:/clean" \
+                    alpine:3.20 \
+                    rm -rf "/clean/${_base}"
+            else
+                echo "[run_nipt] ERROR: cannot remove $NF_WORK_DIR (permission denied)" >&2
+                exit 1
+            fi
+        fi
+        if [[ -e "$NF_WORK_DIR" ]]; then
+            echo "[run_nipt] ERROR: failed to clear $NF_WORK_DIR" >&2
+            exit 1
+        fi
+    fi
     rm -f "$NF_SESSION_FILE" "$NF_LOG_FILE"
     mkdir -p "$NF_WORK_DIR"
     echo "[run_nipt] Fresh: cleared per-sample work/ + session (${SAMPLE_NAME})"
@@ -592,28 +613,34 @@ python3 "${REPO_DIR}/bin/scripts/modules/portal_output_layout.py" \
     --outdir "${HOST_OUTPUT_DIR}" \
     || echo "[run_nipt] WARNING: portal_output_layout failed (continuing with existing tree)" >&2
 
-# Build tar (deterministic relative paths; skip if Output_* dirs missing)
+# Build Portal-facing tar (flat ken layout; no hmmcopy / nested dups / gxcnv bins).
 TAR_FILE="${HOST_OUTPUT_DIR}/${ORDER_ID}.output.tar"
-(
-    cd "$HOST_OUTPUT_DIR"
-    # Collect Output_* subdirs + algorithm result dirs + top-level JSON
-    TAR_ITEMS=()
-    while IFS= read -r -d '' dir; do
-        TAR_ITEMS+=( "$(basename "$dir")" )
-    done < <(find . -maxdepth 1 -type d -name 'Output_*' -print0 2>/dev/null || true)
-    # Include gxcnv result directories if present (Portal uses Output_WC/WCX
-    # flat aliases; raw trees kept for internal review)
-    [[ -d "gxcnv1" ]] && TAR_ITEMS+=( "gxcnv1" )
-    [[ -d "gxcnv2" ]] && TAR_ITEMS+=( "gxcnv2" )
-    # Always include the JSON; HTML is under Output_Result/
-    [[ -f "${ORDER_ID}.json" ]] && TAR_ITEMS+=( "${ORDER_ID}.json" )
-    if (( ${#TAR_ITEMS[@]} == 0 )); then
-        echo "[run_nipt] WARNING: no Output_* dirs to archive" >&2
-    else
-        tar -cf "$TAR_FILE" "${TAR_ITEMS[@]}"
-        echo "[run_nipt] Built archive: $TAR_FILE ($(du -h "$TAR_FILE" | cut -f1))"
-    fi
-)
+if python3 "${REPO_DIR}/bin/scripts/modules/package_output_tar.py" \
+    --outdir "${HOST_OUTPUT_DIR}" \
+    --order-id "${ORDER_ID}" \
+    --tar-path "${TAR_FILE}"; then
+    :
+else
+    echo "[run_nipt] WARNING: package_output_tar.py failed — falling back to Output_* only (no hmmcopy)" >&2
+    (
+        cd "$HOST_OUTPUT_DIR"
+        TAR_ITEMS=()
+        while IFS= read -r -d '' dir; do
+            base="$(basename "$dir")"
+            [[ "$base" == "Output_hmmcopy" ]] && continue
+            TAR_ITEMS+=( "$base" )
+        done < <(find . -maxdepth 1 -type d -name 'Output_*' -print0 2>/dev/null || true)
+        [[ -d "gxcnv1" ]] && TAR_ITEMS+=( "gxcnv1" )
+        [[ -d "gxcnv2" ]] && TAR_ITEMS+=( "gxcnv2" )
+        [[ -f "${ORDER_ID}.json" ]] && TAR_ITEMS+=( "${ORDER_ID}.json" )
+        if (( ${#TAR_ITEMS[@]} == 0 )); then
+            echo "[run_nipt] WARNING: no Output_* dirs to archive" >&2
+        else
+            tar -cf "$TAR_FILE" "${TAR_ITEMS[@]}"
+            echo "[run_nipt] Built archive (fallback): $TAR_FILE ($(du -h "$TAR_FILE" | cut -f1))"
+        fi
+    )
+fi
 
 # -----------------------------------------------------------
 # Success markers

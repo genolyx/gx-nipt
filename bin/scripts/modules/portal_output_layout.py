@@ -39,6 +39,27 @@ def _copy_file(src: Path, dst: Path) -> bool:
     return True
 
 
+def _same_bytes(a: Path, b: Path) -> bool:
+    if not a.is_file() or not b.is_file():
+        return False
+    if a.stat().st_size != b.stat().st_size:
+        return False
+    return a.read_bytes() == b.read_bytes()
+
+
+def _force_copy(src: Path, dst: Path) -> bool:
+    """Overwrite dst with src. Used so gxcnv flats cannot block native WC/WCX."""
+    if not src.is_file() or src.stat().st_size == 0:
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() and src.samefile(dst):
+        return False
+    if dst.is_file() and _same_bytes(src, dst):
+        return False
+    shutil.copy2(src, dst)
+    return True
+
+
 def _resolve_gxcnv_dir(analysis_dir: Path, sample: str, name: str) -> Path | None:
     """Prefer nested analysis/<sample>/<sample>/gxcnvN (publishDir layout)."""
     candidates = [
@@ -121,7 +142,7 @@ def flatten_portal_plots(outdir: Path, sample: str) -> list[str]:
             if _copy_file(src, dst):
                 written.append(str(dst))
 
-    # ── WC flat hoist (native WC only; gxcnv1 uses sidecars / gxcnv1/) ─
+    # ── WC flat hoist (native Wisecondor only; never leave gxcnv1 on .wc. names)
     for group in GROUPS:
         for fname in (
             f"{sample}.wc.{group}_z.png",
@@ -129,35 +150,39 @@ def flatten_portal_plots(outdir: Path, sample: str) -> list[str]:
         ):
             src = outdir / "Output_WC" / group / fname
             dst = outdir / "Output_WC" / fname
-            if _copy_file(src, dst):
+            gx1 = outdir / "gxcnv1" / f"{sample}_{group}_genome.png"
+            if fname.endswith(".png") and src.is_file() and gx1.is_file() and _same_bytes(src, gx1):
+                continue
+            if _force_copy(src, dst):
                 written.append(str(dst))
 
-    # ── WCX flat hoist + native genome_wide rename ───────────────────────
+    # ── WCX: native plot is plots/genome_wide.png, not gxcnv2 genome.png
     for group in GROUPS:
-        for fname in (
-            f"{sample}.wcx.{group}.png",
-            f"{sample}.wcx.{group}_aberrations.bed",
-        ):
-            src = outdir / "Output_WCX" / group / fname
-            dst = outdir / "Output_WCX" / fname
-            if _copy_file(src, dst):
-                written.append(str(dst))
+        bed_src = outdir / "Output_WCX" / group / f"{sample}.wcx.{group}_aberrations.bed"
+        bed_dst = outdir / "Output_WCX" / f"{sample}.wcx.{group}_aberrations.bed"
+        if _force_copy(bed_src, bed_dst):
+            written.append(str(bed_dst))
 
         flat_png = outdir / "Output_WCX" / f"{sample}.wcx.{group}.png"
-        if not flat_png.is_file():
-            candidates = [
-                outdir
-                / "Output_WCX"
-                / group
-                / f"{sample}.wcx.{group}.plots"
-                / "genome_wide.png",
-                outdir / "Output_WCX" / group / "genome_wide.png",
-                outdir / "Output_WCX" / "chr_plots" / group / "genome_wide.png",
-            ]
-            for src in candidates:
-                if _copy_file(src, flat_png):
-                    written.append(str(flat_png))
-                    break
+        gx2 = outdir / "gxcnv2" / f"{sample}_{group}_genome.png"
+        native_png_candidates = [
+            outdir / "Output_WCX" / group / f"{sample}.wcx.{group}.plots" / "genome_wide.png",
+            outdir / "Output_WCX" / group / "genome_wide.png",
+            outdir / "Output_WCX" / "chr_plots" / group / "genome_wide.png",
+            outdir / "Output_WCX" / group / f"{sample}.wcx.{group}.png",
+        ]
+        native_png = next(
+            (
+                p
+                for p in native_png_candidates
+                if p.is_file()
+                and p.stat().st_size > 0
+                and not (gx2.is_file() and _same_bytes(p, gx2))
+            ),
+            None,
+        )
+        if native_png is not None and _force_copy(native_png, flat_png):
+            written.append(str(flat_png))
 
         # Microdeletion Zoom-in: Portal JSON → Output_WCX/chr_plots/{group}/chrN.png
         # Source is WisecondorX --plot output: {sample}.wcx.{group}.plots/chr*.png

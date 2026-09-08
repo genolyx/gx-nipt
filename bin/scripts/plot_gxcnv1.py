@@ -585,7 +585,13 @@ def plot_qc(df: pd.DataFrame, prefix: str) -> None:
 # ── Touch helper ──────────────────────────────────────────────────────────────
 
 def _touch(path: str) -> None:
-    open(path, "a").close()
+    # Minimal 1x1 PNG so Nextflow process `-s` checks accept skip stubs.
+    import base64
+    data = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    with open(path, "wb") as fh:
+        fh.write(data)
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
