@@ -54,6 +54,19 @@ _DEFAULT_CYTO_PATHS = [
 LR_TRISOMY   =  0.585
 LR_MONOSOMY  = -1.000
 
+# Portal Zoom-in needs these PNGs. Keep figure size; drop raster DPI so
+# output.tar stays smaller. Chr plots are ~24 files × 3 groups × 2 engines.
+DPI_GENOME = 120   # was 150
+DPI_CHR    = 110   # was 130
+DPI_QC     = 110   # was 130
+
+
+def _save_png(out: str, dpi: int) -> None:
+    try:
+        plt.savefig(out, dpi=dpi, bbox_inches="tight", pil_kwargs={"optimize": True})
+    except TypeError:
+        plt.savefig(out, dpi=dpi, bbox_inches="tight")
+
 CHROMS = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"]
 CHROM_ORDER = {c: i for i, c in enumerate(CHROMS)}
 
@@ -409,7 +422,7 @@ def plot_genome(df: pd.DataFrame, calls: pd.DataFrame | None,
 
     plt.tight_layout(pad=0.5)
     out = f"{prefix}_genome.png"
-    plt.savefig(out, dpi=150, bbox_inches="tight")
+    _save_png(out, DPI_GENOME)
     plt.close(fig)
     print(f"[plot_gxcnv1] {out}", flush=True)
 
@@ -526,7 +539,7 @@ def plot_chromosome(df_chr: pd.DataFrame, calls: pd.DataFrame | None,
         plt.tight_layout(pad=0.3)
     safe = chrom.replace("/", "_")
     out = f"{prefix}_{safe}.png"
-    plt.savefig(out, dpi=130, bbox_inches="tight")
+    _save_png(out, DPI_CHR)
     plt.close(fig)
     print(f"[plot_gxcnv1] {out}", flush=True)
 
@@ -577,7 +590,7 @@ def plot_qc(df: pd.DataFrame, prefix: str) -> None:
 
     plt.tight_layout(pad=0.5)
     out = f"{prefix}_qc.png"
-    plt.savefig(out, dpi=130, bbox_inches="tight")
+    _save_png(out, DPI_QC)
     plt.close(fig)
     print(f"[plot_gxcnv1] {out}", flush=True)
 
