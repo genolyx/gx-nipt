@@ -222,8 +222,9 @@ def read_fetal_fraction_data(ff_path, gender_path):
 
         logger.info(f"gender : {gender}")
 
-        # 3. YFF 표시값 결정 (Female 샘플은 YFF 측정 불가 → N/A)
-        yff: object = round(yff_raw, 4) if gender != "Female" else "N/A"
+        # 3. YFF / SeqFF 표시값 — ken-nipt 파이프라인과 같이 Review는 소수점 2자리
+        yff: object = round(yff_raw, 2) if gender != "Female" else "N/A"
+        seqff = round(seqff, 2)
 
         # 4. FF ratio 계산 (YFF_2 / M-SeqFF) — ken-nipt 와 동일
         # Female 샘플도 YFF_2 원값으로 비율을 계산 (표시용 yff 는 N/A 유지)
@@ -241,7 +242,7 @@ def read_fetal_fraction_data(ff_path, gender_path):
             "gender": gender,
             "yff": yff,
             "seqff": seqff,
-            "final_ff": round(final_ff, 4),
+            "final_ff": round(final_ff, 2),
             "ff_source": ff_source,
             "ff_ratio": ff_ratio,
         }

@@ -40,7 +40,9 @@ process GENERATE_JSON {
         // generate_json_output.py uses single-dash flags (ken-nipt legacy CLI)
         // and writes to ``<output_dir>/<sample_name>/<sample_name>.json``.
         // We run it with output_dir=. and rename to the Nextflow-expected name.
-        def bed_dir = "${params.ref_dir}/labs/${labcode}/bed"
+        // ken-nipt passes {data}/bed/common — CSVs (Single/Twin_risk_before.csv)
+        // and TargetDB_md*.bed live there, not in the parent lab bed dir.
+        def bed_dir = "${params.ref_dir}/labs/${labcode}/bed/common"
         // Maternal age drives risk_before tables; daemon/run_nipt pass --age into
         // params.age. Fall back to 35 only when from_bam/algorithm_only omit it.
         def maternal_age = (params.age != null && params.age.toString().trim()) ? params.age : 35
