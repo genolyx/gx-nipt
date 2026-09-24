@@ -242,17 +242,20 @@ def build_calls_df(wc: dict, df_bins: pd.DataFrame) -> pd.DataFrame:
 
 # ── TSV writers (same interface as gxcnv2) ────────────────────────────────────
 
-def _write(df: pd.DataFrame, path: str) -> None:
+def _write(df: pd.DataFrame, path: str, comments: list[str] | None = None) -> None:
     with open(path, "w") as f:
+        for line in comments or []:
+            f.write(f"##{line}\n")
         f.write("#" + "\t".join(str(c) for c in df.columns) + "\n")
         df.to_csv(f, sep="\t", index=False, header=False, float_format="%.6g", na_rep="NA")
     logger.info("Written: %s (%d rows)", path, len(df))
 
 
-def write_bins(df: pd.DataFrame, prefix: str) -> None:
+def write_bins(df: pd.DataFrame, prefix: str, z_cutoff: float | None = None) -> None:
     cols  = ["chrom", "start", "end", "log2_ratio", "z_score", "mad_z"]
     avail = [c for c in cols if c in df.columns]
-    _write(df[avail].copy(), f"{prefix}_bins.tsv")
+    comments = [f"z_cutoff={z_cutoff:.6g}"] if z_cutoff is not None else None
+    _write(df[avail].copy(), f"{prefix}_bins.tsv", comments=comments)
 
 
 def write_segments(df_calls: pd.DataFrame | None, prefix: str) -> None:
@@ -341,7 +344,7 @@ def main():
     }
 
     # Write outputs
-    write_bins(df_bins, args.prefix)
+    write_bins(df_bins, args.prefix, z_cutoff=float(wc["threshold_z"]))
     write_segments(df_calls, args.prefix)
     write_calls(df_calls, args.prefix)
     write_qcmetrics(qc, args.prefix)

@@ -10,7 +10,7 @@ Visual style is intentionally distinct from both WisecondorX and gxcnv:
   • Per-chromosome: compact panels with confidence ribbon + CBS segment line
 
 Outputs:
-  {prefix}_genome.png   — genome-wide log2(ratio) track, all chromosomes
+  {prefix}_genome.png   — genome-wide track plus 4-column chromosome board
   {prefix}_chr{N}.png   — per-chromosome panels (individual files)
   {prefix}_qc.png       — KDE of log2(ratio) distribution
 """
@@ -19,6 +19,8 @@ import argparse
 import os
 import sys
 import warnings
+
+import cnv_board
 
 import matplotlib
 matplotlib.use("Agg")
@@ -33,15 +35,15 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
-C_NORMAL    = "#4ECDC4"   # teal
-C_GAIN      = "#C94FD8"   # violet
-C_LOSS      = "#FF6B35"   # amber-orange
-C_FILTERED  = "#C8D6DF"   # muted blue-grey
-C_SEG_NORM  = "#607D8B"   # steel grey (segment line)
-C_SEG_GAIN  = "#9B27AF"   # deep violet (gain segment)
-C_SEG_LOSS  = "#E64A19"   # deep orange (loss segment)
-C_RIBBON    = "#CFE8EC"   # pale teal (±MAD ribbon)
-C_GUIDE     = "#90A4AE"   # light steel for reference lines
+C_NORMAL    = "#2EC8D6"   # cyan
+C_GAIN      = "#C44BD6"   # purple
+C_LOSS      = "#F07D5A"   # salmon
+C_FILTERED  = "#C5D0D6"
+C_SEG_NORM  = "#607D8B"
+C_SEG_GAIN  = "#C44BD6"
+C_SEG_LOSS  = "#F07D5A"
+C_RIBBON    = "#E7F7F8"
+C_GUIDE     = "#9AA5B0"
 
 # Trisomy log2(3/2) ≈ +0.585 and monosomy log2(1/2) ≈ -1.000
 LR_TRISOMY   =  0.585
@@ -190,197 +192,28 @@ def _clean_lr(lr, lo=-2.5, hi=2.5):
 
 # ── Genome-wide plot ───────────────────────────────────────────────────────────
 
+
 def plot_genome(df: pd.DataFrame, calls: pd.DataFrame | None,
-                prefix: str, segments: pd.DataFrame | None = None) -> None:
-    """
-    Genome-wide log2(ratio) filled-area track.
-
-    Different from gxcnv (scatter Z-score) and WCX built-in (line plots):
-    uses a filled-area ribbon to emphasise deviation from baseline.
-    """
-    pos, offsets, cumsum = genome_positions(df)
-    lr = _clean_lr(df["log2_ratio"].values)
-    colors = _bin_color(df, calls)
-
-    unique_chroms = sorted(df["chrom_idx"].unique())
-    n_chr = len(unique_chroms)
-
-    ribbon_hw = _ribbon_mad(df)
-
-    fig, ax = plt.subplots(figsize=(22, 4))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-
-    # Alternating chromosome bands (subtle)
-    for i, ci in enumerate(unique_chroms):
-        x0, x1 = cumsum[i], cumsum[i + 1]
-        bg = "#F5F7F8" if i % 2 == 0 else "white"
-        ax.axvspan(x0, x1, color=bg, zorder=0, linewidth=0)
-
-    # ±MAD confidence ribbon
-    ax.fill_between(
-        [0, cumsum[-1]], [-ribbon_hw, -ribbon_hw], [ribbon_hw, ribbon_hw],
-        color=C_RIBBON, alpha=0.55, zorder=1, linewidth=0,
+                prefix: str, segments: pd.DataFrame | None = None,
+                cyto_dict: dict | None = None,
+                z_cutoff: float | None = None) -> None:
+    """Genome-wide track plus 4-column chromosome board → {prefix}_genome.png."""
+    cnv_board.render_board(
+        df, calls, prefix, cyto_dict=cyto_dict, log_prefix="plot_gxcnv2",
+        dpi=DPI_GENOME, z_cutoff=z_cutoff,
     )
 
-    # Trisomy / monosomy guide lines
-    ax.axhline(0,           color=C_GUIDE, lw=0.8, zorder=2)
-    ax.axhline(LR_TRISOMY,  color=C_GAIN,  lw=0.7, ls="--", alpha=0.45, zorder=2)
-    ax.axhline(LR_MONOSOMY, color=C_LOSS,  lw=0.7, ls="--", alpha=0.45, zorder=2)
-
-    # Filled area from 0 to log2_ratio (gain above, loss below)
-    lr_arr = np.array(lr, dtype=float)
-    ax.fill_between(pos, 0, lr_arr,
-                    where=lr_arr >= 0, color=C_GAIN, alpha=0.25,
-                    linewidth=0, zorder=3)
-    ax.fill_between(pos, 0, lr_arr,
-                    where=lr_arr < 0, color=C_LOSS, alpha=0.25,
-                    linewidth=0, zorder=3)
-
-    # Bin dots (coloured by call)
-    ax.scatter(pos, lr_arr, c=colors, s=1.2, alpha=0.7, linewidths=0, zorder=4)
-
-    # CBS segment overlay
-    if segments is not None and not segments.empty:
-        for _, seg in segments.iterrows():
-            ci = CHROM_ORDER.get(seg["chrom"])
-            if ci is None or ci not in unique_chroms:
-                continue
-            idx = unique_chroms.index(ci)
-            off = cumsum[idx]
-            slr = _clean_lr(np.array([seg.get("mean_log2_ratio", 0)]))[0]
-            x0  = off + seg["start"]
-            x1  = off + seg["end"]
-            sc  = _seg_color(float(seg.get("mean_log2_ratio", 0)))
-            lw  = 3.5 if abs(float(seg.get("mean_log2_ratio", 0))) > 0.3 else 1.2
-            ax.hlines(slr, x0, x1, colors=sc, linewidths=lw, zorder=5)
-
-    # Call highlight spans
-    if calls is not None and not calls.empty:
-        for _, row in calls.iterrows():
-            ci = CHROM_ORDER.get(row["chrom"])
-            if ci is None or ci not in unique_chroms:
-                continue
-            idx = unique_chroms.index(ci)
-            x0  = cumsum[idx] + float(row["start"])
-            x1  = cumsum[idx] + float(row["end"])
-            clr = C_GAIN if str(row.get("type", "")) == "GAIN" else C_LOSS
-            ax.axvspan(x0, x1, color=clr, alpha=0.22, zorder=6)
-            ax.text(
-                (x0 + x1) / 2, 1.9,
-                str(row.get("type", "")), fontsize=6,
-                ha="center", va="top", color=clr, fontweight="bold", zorder=7,
-            )
-
-    # X-axis: chromosome labels
-    tick_pos = [(cumsum[i] + cumsum[i + 1]) / 2 for i in range(n_chr)]
-    tick_lbl = [CHROMS[ci].replace("chr", "") for ci in unique_chroms]
-    ax.set_xticks(tick_pos)
-    ax.set_xticklabels(tick_lbl, fontsize=7)
-    ax.set_xlim(0, cumsum[-1])
-    ax.set_ylim(-2.5, 2.5)
-    ax.set_ylabel("log₂(ratio)", fontsize=9)
-    ax.set_title(
-        f"{os.path.basename(prefix)} — Genome-wide CNV  [log₂ ratio]",
-        fontsize=10,
-    )
-
-    legend_handles = [
-        mpatches.Patch(color=C_NORMAL,  label="Normal"),
-        mpatches.Patch(color=C_GAIN,    label="Gain (call)"),
-        mpatches.Patch(color=C_LOSS,    label="Loss (call)"),
-        mpatches.Patch(color=C_RIBBON,  alpha=0.7, label="±1.5 MAD ribbon"),
-        plt.Line2D([0], [0], color=C_GAIN, lw=2, ls="--",
-                   label=f"Trisomy guide (+{LR_TRISOMY:.2f})"),
-        plt.Line2D([0], [0], color=C_LOSS, lw=2, ls="--",
-                   label=f"Monosomy guide ({LR_MONOSOMY:.2f})"),
-    ]
-    ax.legend(handles=legend_handles, fontsize=7, loc="upper right",
-              framealpha=0.85, edgecolor="#CCCCCC", ncol=2)
-
-    plt.tight_layout(pad=0.5)
-    out = f"{prefix}_genome.png"
-    _save_png(out, DPI_GENOME)
-    plt.close(fig)
-    print(f"[plot_gxcnv2] {out}", flush=True)
-
-
-# ── Per-chromosome plot ────────────────────────────────────────────────────────
 
 def plot_chromosome(df_chr: pd.DataFrame, calls: pd.DataFrame | None,
                     chrom: str, prefix: str,
-                    segments: pd.DataFrame | None = None) -> None:
-    """
-    Single-chromosome log2(ratio) panel.
-
-    Layout: filled area + CBS segment line + confidence ribbon.
-    Annotated with any GAIN/LOSS calls for this chromosome.
-    """
-    fig, ax = plt.subplots(figsize=(13, 3.2))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("#FAFBFC")
-
-    x   = (df_chr["start"].values + df_chr["end"].values) / 2
-    lr  = _clean_lr(df_chr["log2_ratio"].values)
-
-    chr_calls = (calls[calls["chrom"] == chrom]
-                 if calls is not None and not calls.empty else pd.DataFrame())
-
-    colors = _bin_color(df_chr.reset_index(drop=True),
-                        chr_calls if not chr_calls.empty else None)
-
-    ribbon_hw = _ribbon_mad(df_chr)
-    ax.fill_between(x, -ribbon_hw, ribbon_hw,
-                    color=C_RIBBON, alpha=0.55, linewidth=0, zorder=1)
-
-    ax.axhline(0,           color=C_GUIDE, lw=0.8, zorder=2)
-    ax.axhline(LR_TRISOMY,  color=C_GAIN,  lw=0.7, ls="--", alpha=0.4, zorder=2)
-    ax.axhline(LR_MONOSOMY, color=C_LOSS,  lw=0.7, ls="--", alpha=0.4, zorder=2)
-
-    lr_arr = np.array(lr, dtype=float)
-    ax.fill_between(x, 0, lr_arr, where=lr_arr >= 0,
-                    color=C_GAIN, alpha=0.22, linewidth=0, zorder=3)
-    ax.fill_between(x, 0, lr_arr, where=lr_arr < 0,
-                    color=C_LOSS, alpha=0.22, linewidth=0, zorder=3)
-
-    ax.scatter(x, lr_arr, c=colors, s=6, alpha=0.75, linewidths=0, zorder=4)
-
-    # CBS segments for this chromosome
-    if segments is not None and not segments.empty:
-        chr_segs = segments[segments["chrom"] == chrom]
-        for _, seg in chr_segs.iterrows():
-            slr = _clean_lr(np.array([seg.get("mean_log2_ratio", 0)]))[0]
-            sc  = _seg_color(float(seg.get("mean_log2_ratio", 0)))
-            lw  = 3.5 if abs(float(seg.get("mean_log2_ratio", 0))) > 0.3 else 1.5
-            ax.hlines(slr, seg["start"], seg["end"],
-                      colors=sc, linewidths=lw, zorder=5)
-
-    # Highlight calls
-    for _, row in chr_calls.iterrows():
-        x0, x1 = float(row["start"]), float(row["end"])
-        typ     = str(row.get("type", ""))
-        clr     = C_GAIN if typ == "GAIN" else C_LOSS
-        ax.axvspan(x0, x1, color=clr, alpha=0.18, zorder=6)
-        ax.text((x0 + x1) / 2, 2.1, typ,
-                fontsize=7, ha="center", color=clr,
-                fontweight="bold", zorder=7)
-
-    chrom_label = chrom.replace("chr", "")
-    ax.set_title(f"{os.path.basename(prefix)} — Chr {chrom_label}  [log₂ ratio]",
-                 fontsize=9)
-    ax.set_xlabel("Genomic position", fontsize=8)
-    ax.set_ylabel("log₂(ratio)", fontsize=8)
-    ax.set_ylim(-2.5, 2.5)
-    ax.xaxis.set_major_formatter(
-        ticker.FuncFormatter(lambda v, _: f"{v/1e6:.0f} Mb")
+                    segments: pd.DataFrame | None = None,
+                    cyto_dict: dict | None = None,
+                    guides=None) -> None:
+    """Single-chromosome panel in the same style as the board."""
+    cnv_board.render_chromosome(
+        df_chr, calls, chrom, prefix, cyto_dict=cyto_dict,
+        log_prefix="plot_gxcnv2", dpi=DPI_CHR, guides=guides,
     )
-
-    plt.tight_layout(pad=0.3)
-    safe = chrom.replace("/", "_")
-    out = f"{prefix}_{safe}.png"
-    _save_png(out, DPI_CHR)
-    plt.close(fig)
-    print(f"[plot_gxcnv2] {out}", flush=True)
 
 
 # ── QC plot — KDE ─────────────────────────────────────────────────────────────
@@ -478,8 +311,19 @@ def main():
     if segments is not None:
         print(f"[plot_gxcnv2] Loaded {len(segments)} CBS segments", flush=True)
 
-    # Genome-wide
-    plot_genome(df_bins, calls, args.prefix, segments=segments)
+    cyto_path = cnv_board.resolve_cytoband(getattr(args, "cytoband", None))
+    cyto_dict = cnv_board.load_cytobands(cyto_path) if cyto_path else None
+    if cyto_dict:
+        print(f"[plot_gxcnv2] Loaded cytobands from {cyto_path}", flush=True)
+
+    z_cutoff = cnv_board.read_z_cutoff(args.bins)
+    guides = cnv_board.make_guides(df_bins, z_cutoff)
+    if z_cutoff is None:
+        print("[plot_gxcnv2] No z cutoff found — threshold lines omitted", flush=True)
+
+    # Genome-wide board (top track + 4-column chromosomes)
+    plot_genome(df_bins, calls, args.prefix, segments=segments,
+                cyto_dict=cyto_dict, z_cutoff=z_cutoff)
 
     # Per-chromosome
     chrom_list = args.chromosomes or sorted(
@@ -489,7 +333,8 @@ def main():
         df_chr = df_bins[df_bins["chrom"] == chrom]
         if len(df_chr) == 0:
             continue
-        plot_chromosome(df_chr, calls, chrom, args.prefix, segments=segments)
+        plot_chromosome(df_chr, calls, chrom, args.prefix,
+                        segments=segments, cyto_dict=cyto_dict, guides=guides)
 
     # QC
     plot_qc(df_bins, args.prefix)

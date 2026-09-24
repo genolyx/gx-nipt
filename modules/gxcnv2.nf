@@ -61,10 +61,16 @@ process GXCNV2_PREDICT {
     fi
 
     # ── Run gxcnv2 predict in beds mode (reuse RUN_WCX output) ─────────────────
+    # Same z cutoff RUN_WCX used: orig/fetus 6, mom 15.
+    ZSCORE=6
+    case "${sample_id}" in
+        *_mom) ZSCORE=15 ;;
+    esac
     python3 /opt/gx-nipt/bin/scripts/gxcnv2_predict.py \\
         --bins-bed        ${bins_bed} \\
         --segments-bed    ${segs_bed} \\
         --aberrations-bed ${aber_bed} \\
+        --zscore          \${ZSCORE} \\
         -o                ${sample_id} \\
         2>&1 | tee ${sample_id}.gxcnv2_predict.log
 

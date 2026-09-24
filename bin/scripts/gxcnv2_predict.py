@@ -353,18 +353,21 @@ def _sort(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _write(df: pd.DataFrame, path: str) -> None:
+def _write(df: pd.DataFrame, path: str, comments: list[str] | None = None) -> None:
     with open(path, "w") as f:
+        for line in comments or []:
+            f.write(f"##{line}\n")
         f.write("#" + "\t".join(str(c) for c in df.columns) + "\n")
         df.to_csv(f, sep="\t", index=False, header=False, float_format="%.6g",
                   na_rep="NA")
     logger.info("Written: %s (%d rows)", path, len(df))
 
 
-def write_bins(df: pd.DataFrame, prefix: str) -> None:
+def write_bins(df: pd.DataFrame, prefix: str, z_cutoff: float | None = None) -> None:
     cols = ["chrom", "start", "end", "log2_ratio", "z_score", "mad_z"]
     avail = [c for c in cols if c in df.columns]
-    _write(_sort(df[avail].copy()), f"{prefix}_bins.tsv")
+    comments = [f"z_cutoff={z_cutoff:.6g}"] if z_cutoff is not None else None
+    _write(_sort(df[avail].copy()), f"{prefix}_bins.tsv", comments=comments)
 
 
 def write_segments(df: pd.DataFrame | None, prefix: str) -> None:
@@ -493,7 +496,7 @@ def main():
     logger.info("MAPD = %.4f | calls = %d", mapd if not np.isnan(mapd) else -1, len(df_calls))
 
     # ── QC metrics ────────────────────────────────────────────────────────────
-    zscore_thresh = args.zscore if not beds_mode else "from_wcx"
+    zscore_thresh = args.zscore
     qc = {
         "n_bins":            len(df_bins),
         "mapd":              f"{mapd:.5g}" if not np.isnan(mapd) else "NA",
@@ -506,7 +509,7 @@ def main():
     }
 
     # ── Write outputs ─────────────────────────────────────────────────────────
-    write_bins(df_bins, args.prefix)
+    write_bins(df_bins, args.prefix, z_cutoff=float(args.zscore))
     write_segments(df_segs, args.prefix)
     write_calls(df_calls, args.prefix)
     write_qcmetrics(qc, args.prefix)
