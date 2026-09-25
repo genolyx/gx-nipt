@@ -380,7 +380,7 @@ def draw_chromosome(ax, df_chr: pd.DataFrame, calls: pd.DataFrame | None,
 
 def render_board(df: pd.DataFrame, calls: pd.DataFrame | None, prefix: str,
                  cyto_dict: dict | None = None, log_prefix: str = "cnv_board",
-                 dpi: int = 110, z_cutoff: float | None = None) -> str:
+                 dpi: int = 150, z_cutoff: float | None = None) -> str:
     """Write {prefix}_genome.png as the genome-wide + 4-column board."""
     present = [c for c in CHROMS if c in set(df["chrom"])]
     n = len(present)
@@ -451,7 +451,7 @@ def render_board(df: pd.DataFrame, calls: pd.DataFrame | None, prefix: str,
 
 def render_chromosome(df_chr: pd.DataFrame, calls: pd.DataFrame | None,
                       chrom: str, prefix: str, cyto_dict=None,
-                      log_prefix: str = "cnv_board", dpi: int = 110,
+                      log_prefix: str = "cnv_board", dpi: int = 130,
                       guides: tuple[float, float, float] | None = None) -> str:
     """Single-chromosome PNG in the same style as a board panel."""
     fig, ax = plt.subplots(figsize=(8.2, 2.6), facecolor="white")

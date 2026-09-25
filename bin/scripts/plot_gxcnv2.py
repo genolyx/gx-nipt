@@ -49,11 +49,9 @@ C_GUIDE     = "#9AA5B0"
 LR_TRISOMY   =  0.585
 LR_MONOSOMY  = -1.000
 
-# Portal Zoom-in needs these PNGs. Keep figure size; drop raster DPI so
-# output.tar stays smaller. Chr plots are ~24 files × 3 groups × 2 engines.
-DPI_GENOME = 120   # was 150
-DPI_CHR    = 110   # was 130
-DPI_QC     = 110   # was 130
+DPI_GENOME = 150
+DPI_CHR    = 130
+DPI_QC     = 130
 
 
 def _save_png(out: str, dpi: int) -> None:
