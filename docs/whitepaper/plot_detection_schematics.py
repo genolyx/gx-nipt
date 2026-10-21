@@ -177,6 +177,11 @@ def _fmt(v, nd=2):
     return f"{v:.{nd}f}".replace("-", "\u2212")
 
 
+def _fmtz(v):
+    """Z threshold with only as many decimals as the config value has."""
+    return _fmt(v, 1 if round(v, 1) == round(v, 6) else 2)
+
+
 # ── 1. female XO / XXX ──────────────────────────────────────────────────────
 def plot_female(det, group, ref_csv, out_dir, xlim=(4.5, 6.0), ylim=(-30, 30)):
     p = det.get_female_params(group)
@@ -402,7 +407,8 @@ def plot_trisomy(chrom, group, ref_csv, thr_tsv, out_dir):
 
     xpad = (df["UAR"].max() - df["UAR"].min()) * 0.06
     xlim = (df["UAR"].min() - xpad, df["UAR"].max() + xpad)
-    ylim = (min(-5.0, df["Z"].min() - 4.5), max(35.0, df["Z"].max() + 2))
+    ylim = (min(-5.0, df["Z"].min() - 4.5),
+            max(df["Z"].max() * 1.15 + 2, t["Z_max"] + 5))
 
     fig, ax = _new_fig(
         f"Autosomal trisomy: {tri}",
@@ -432,8 +438,8 @@ def plot_trisomy(chrom, group, ref_csv, thr_tsv, out_dir):
 
     _vlabels(ax, [(t["UAR_min"], "UAR_min", _fmt(t["UAR_min"])),
                   (t["UAR_max"], "UAR_max", _fmt(t["UAR_max"]))])
-    _hlabels(ax, [(t["Z_max"], "Z_max", _fmt(t["Z_max"], 1)),
-                  (t["Z_min"], "Z_min", _fmt(t["Z_min"], 1))])
+    _hlabels(ax, [(t["Z_max"], "Z_max", _fmtz(t["Z_max"])),
+                  (t["Z_min"], "Z_min", _fmtz(t["Z_min"]))])
 
     _zone_text(ax, t["UAR_max"] + (xlim[1] - t["UAR_max"]) * 0.3,
                ylim[1] - (ylim[1] - t["Z_max"]) * 0.15,
@@ -461,11 +467,11 @@ def plot_trisomy(chrom, group, ref_csv, thr_tsv, out_dir):
     ])
 
     _rules(fig, [
-        f"\u2022 Detected:  Z \u2265 Z_max ({_fmt(t['Z_max'], 1)})  AND  "
+        f"\u2022 Detected:  Z \u2265 Z_max ({_fmtz(t['Z_max'])})  AND  "
         f"UAR \u2265 UAR_max ({_fmt(t['UAR_max'])})",
-        f"\u2022 Suspected:  Z \u2265 Z_min ({_fmt(t['Z_min'], 1)})  OR  "
+        f"\u2022 Suspected:  Z \u2265 Z_min ({_fmtz(t['Z_min'])})  OR  "
         f"UAR \u2265 UAR_min ({_fmt(t['UAR_min'])}),  when not Detected",
-        f"\u2022 Not Detected:  Z < {_fmt(t['Z_min'], 1)}  AND  "
+        f"\u2022 Not Detected:  Z < {_fmtz(t['Z_min'])}  AND  "
         f"UAR < {_fmt(t['UAR_min'])}",
         f"\u2022 Reference check:  euploid max UAR {n['UAR'].max():.3f}, "
         f"max Z {n['Z'].max():.2f}  |  {tri.split()[0]} min UAR "
