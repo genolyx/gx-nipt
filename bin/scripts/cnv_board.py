@@ -199,11 +199,11 @@ def _legend_handles(guides: tuple[float, float, float] | None):
         _hi, _lo, z_cut = guides
         ztxt = _fmt_z(z_cut)
         handles.append(plt.Line2D(
-            [0], [0], color=C_GAIN, lw=1.3, ls="--",
+            [0], [0], color=C_GAIN, lw=0.8, ls="--",
             label=f"gain cutoff (z=+{ztxt})",
         ))
         handles.append(plt.Line2D(
-            [0], [0], color=C_LOSS, lw=1.3, ls="--",
+            [0], [0], color=C_LOSS, lw=0.8, ls="--",
             label=f"loss cutoff (z=−{ztxt})",
         ))
     return handles
@@ -220,7 +220,7 @@ def _style_ax(ax) -> None:
 def _guides(ax, guides: tuple[float, float, float] | None, *, strong: bool = False) -> None:
     if strong:
         zero_c, zero_lw = "#5C6770", 1.05
-        gain_c, loss_c, guide_lw = "#8E24AA", "#E04A28", 1.45
+        gain_c, loss_c, guide_lw = "#8E24AA", "#E04A28", 0.8
         dash = (0, (2.4, 1.3))
         alpha = 1.0
     else:
