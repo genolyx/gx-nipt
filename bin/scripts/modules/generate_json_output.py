@@ -273,6 +273,22 @@ def read_sample_bias_qc(file_path):
         return "Unknown"
 
 
+_SCA_TRISOMY_ITEMS = frozenset({"XO", "XXX", "XXY", "XYY"})
+
+
+def sca_trisomy_high_risk(trisomy_results) -> bool:
+    """True when any SCA row (XO/XXX/XXY/XYY) in trisomy_results is High Risk."""
+    if not trisomy_results:
+        return False
+    for entry in trisomy_results:
+        if (
+            entry.get("item") in _SCA_TRISOMY_ITEMS
+            and entry.get("result") == "High Risk"
+        ):
+            return True
+    return False
+
+
 def determine_final_trisomy_result(trisomy_details_chromosomes):
     """Determine final trisomy result based on chromosomes results"""
     final_results = []
@@ -2358,6 +2374,13 @@ def build_nipt_json(
             except (ValueError, TypeError):
                 ff_ratio_val = 0.0
             ff_ratio_status = "PASS" if ff_ratio_val < ff_ratio_threshold else "FAIL"
+            sca_hr = sca_trisomy_high_risk(output[APPID].get("trisomy_results"))
+            if sca_hr and ff_ratio_status != "PASS":
+                logger.info(
+                    "ff_ratio override: SCA High Risk in trisomy_results "
+                    f"(ratio={ff_ratio_val}, threshold={ff_ratio_threshold}) → PASS"
+                )
+                ff_ratio_status = "PASS"
 
             if ff_ratio_status != "PASS":
                 Final_QC_result = "FAIL"
